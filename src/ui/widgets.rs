@@ -51,15 +51,6 @@ pub(crate) fn header_button(s: &str) -> egui::Button<'_> {
         .min_size([150.0, 44.0].into())
 }
 
-/// Builds the red destructive/exit action button used in the full-screen header.
-pub(crate) fn danger_button(s: &str) -> egui::Button<'_> {
-    egui::Button::new(egui::RichText::new(s).strong().color(egui::Color32::WHITE))
-        .fill(egui::Color32::from_rgb(176, 54, 48))
-        .stroke(egui::Stroke::NONE)
-        .corner_radius(egui::CornerRadius::same(10))
-        .min_size([150.0, 44.0].into())
-}
-
 /// Builds the green primary action button with a caller-selected minimum size.
 pub(crate) fn primary_button(s: &str, size: [f32; 2]) -> egui::Button<'_> {
     egui::Button::new(egui::RichText::new(s).strong().color(egui::Color32::WHITE))

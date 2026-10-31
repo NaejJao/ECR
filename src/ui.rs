@@ -11,6 +11,55 @@ use crate::{
 };
 use eframe::egui;
 
+impl App {
+    /// Prompts for the menu password and opens menu management only after verification.
+    fn menu_password_window(&mut self, ctx: &egui::Context) {
+        let mut open = self.show_menu_password;
+        egui::Window::new("Accès à la gestion du menu")
+            .collapsible(false)
+            .resizable(false)
+            .open(&mut open)
+            .show(ctx, |ui| {
+                ui.label("Saisissez le mot de passe pour gérer le menu.");
+                let response = ui.add(
+                    egui::TextEdit::singleline(&mut self.menu_password)
+                        .password(true)
+                        .hint_text("Mot de passe"),
+                );
+                if self.menu_password_needs_focus {
+                    response.request_focus();
+                    self.menu_password_needs_focus = false;
+                }
+                let submit = ui.button("Valider").clicked()
+                    || (response.lost_focus()
+                        && ui.input(|input| input.key_pressed(egui::Key::Enter)));
+                if submit {
+                    use sha2::{Digest, Sha256};
+                    let digest =
+                        Sha256::digest(format!("ecr-menu-access-v1:{}", self.menu_password));
+                    let expected = [
+                        0xda, 0xa8, 0x60, 0x18, 0x99, 0xbc, 0x95, 0x21, 0x96, 0x79, 0x7a, 0x6e,
+                        0xba, 0x89, 0xc4, 0xc9, 0xb2, 0x11, 0x4c, 0x46, 0x8a, 0x59, 0x74, 0xb6,
+                        0xb0, 0x70, 0x47, 0xed, 0x07, 0x5d, 0x0d, 0x76,
+                    ];
+                    if digest.as_slice() == expected {
+                        self.screen = Screen::Menu;
+                        self.show_menu_password = false;
+                        self.menu_password.clear();
+                    } else {
+                        self.menu_password.clear();
+                        self.message = Some("Mot de passe incorrect.".into());
+                    }
+                }
+                if ui.button("Annuler").clicked() {
+                    self.show_menu_password = false;
+                    self.menu_password.clear();
+                }
+            });
+        self.show_menu_password = open && self.show_menu_password;
+    }
+}
+
 impl eframe::App for App {
     /// Draws the shared header, applies global styling, and displays the active screen.
     fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
@@ -56,18 +105,21 @@ impl eframe::App for App {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui
                             .add(header_button(if self.screen == Screen::Order {
-                                "⚙  Gérer le menu"
+                                "🔒  Configuration"
                             } else {
-                                "←  Retour à la commande"
+                                "←  Retour"
                             }))
                             .clicked()
                         {
-                            self.screen = if self.screen == Screen::Order {
-                                Screen::Menu
+                            if self.screen == Screen::Order {
+                                self.show_menu_password = true;
+                                self.menu_password_needs_focus = true;
+                                self.menu_password.clear();
+                                self.message = None;
                             } else {
-                                Screen::Order
-                            };
-                            self.message = None;
+                                self.screen = Screen::Order;
+                                self.message = None;
+                            }
                         }
 
                         if self.screen == Screen::Order
@@ -76,8 +128,58 @@ impl eframe::App for App {
                             self.screen = Screen::Daily;
                             self.message = None;
                         }
-                        if ui.add(danger_button("⏻  Quitter")).clicked() {
-                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                        if self.screen == Screen::Order {
+                            let response = ui
+                                .add(
+                                    egui::Button::new("")
+                                        .fill(egui::Color32::from_rgb(176, 54, 48))
+                                        .stroke(egui::Stroke::NONE)
+                                        .corner_radius(egui::CornerRadius::same(10))
+                                        .min_size([48.0, 44.0].into()),
+                                )
+                                .on_hover_text("Quitter");
+                            let rect = response.rect;
+                            let painter = ui.painter();
+                            let stroke = egui::Stroke::new(2.0_f32, egui::Color32::WHITE);
+                            let left = rect.center().x - 8.0;
+                            let top = rect.center().y - 10.0;
+                            let bottom = rect.center().y + 10.0;
+                            painter.line_segment(
+                                [egui::pos2(left, top), egui::pos2(left + 12.0, top)],
+                                stroke,
+                            );
+                            painter.line_segment(
+                                [egui::pos2(left, top), egui::pos2(left, bottom)],
+                                stroke,
+                            );
+                            painter.line_segment(
+                                [egui::pos2(left, bottom), egui::pos2(left + 12.0, bottom)],
+                                stroke,
+                            );
+                            painter.line_segment(
+                                [
+                                    egui::pos2(left + 4.0, rect.center().y),
+                                    egui::pos2(left + 19.0, rect.center().y),
+                                ],
+                                stroke,
+                            );
+                            painter.line_segment(
+                                [
+                                    egui::pos2(left + 14.0, rect.center().y - 5.0),
+                                    egui::pos2(left + 19.0, rect.center().y),
+                                ],
+                                stroke,
+                            );
+                            painter.line_segment(
+                                [
+                                    egui::pos2(left + 14.0, rect.center().y + 5.0),
+                                    egui::pos2(left + 19.0, rect.center().y),
+                                ],
+                                stroke,
+                            );
+                            if response.clicked() {
+                                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                            }
                         }
                     });
                 });
@@ -97,6 +199,9 @@ impl eframe::App for App {
         }
         if self.show_previous_order {
             self.previous_order_window(ctx);
+        }
+        if self.show_menu_password {
+            self.menu_password_window(ctx);
         }
     }
 }

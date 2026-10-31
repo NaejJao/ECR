@@ -63,6 +63,12 @@ pub(crate) struct App {
     pub(crate) expanded_categories: BTreeSet<String>,
     /// Whether the read-only previous-order dialog is open.
     pub(crate) show_previous_order: bool,
+    /// Whether the protected menu-access dialog is open.
+    pub(crate) show_menu_password: bool,
+    /// Requests keyboard focus when the menu-access dialog first appears.
+    pub(crate) menu_password_needs_focus: bool,
+    /// Password currently entered in the menu-access dialog.
+    pub(crate) menu_password: String,
     /// Latest user-facing success or error message.
     pub(crate) message: Option<String>,
 }
@@ -147,6 +153,9 @@ impl Default for App {
             export_directory: String::new(),
             expanded_categories: BTreeSet::new(),
             show_previous_order: false,
+            show_menu_password: false,
+            menu_password_needs_focus: false,
+            menu_password: String::new(),
             message: None,
         };
         if !app.menu_path.exists() {
