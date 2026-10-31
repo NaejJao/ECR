@@ -61,8 +61,10 @@ pub(crate) struct App {
     pub(crate) export_directory: String,
     /// Category names whose detail tables are expanded in the daily report.
     pub(crate) expanded_categories: BTreeSet<String>,
-    /// Whether the read-only previous-order dialog is open.
+    /// Whether the read-only order-history dialog is open.
     pub(crate) show_previous_order: bool,
+    /// Index of the receipt currently shown in the order-history dialog.
+    pub(crate) history_receipt_index: usize,
     /// Whether the protected menu-access dialog is open.
     pub(crate) show_menu_password: bool,
     /// Requests keyboard focus when the menu-access dialog first appears.
@@ -153,6 +155,7 @@ impl Default for App {
             export_directory: String::new(),
             expanded_categories: BTreeSet::new(),
             show_previous_order: false,
+            history_receipt_index: 0,
             show_menu_password: false,
             menu_password_needs_focus: false,
             menu_password: String::new(),

@@ -116,9 +116,10 @@ impl App {
             ui.heading("Commande");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
-                    .add_enabled(!self.receipts.is_empty(), header_button("Précédente"))
+                    .add_enabled(!self.receipts.is_empty(), header_button("Historique"))
                     .clicked()
                 {
+                    self.history_receipt_index = self.receipts.len().saturating_sub(1);
                     self.show_previous_order = true;
                 }
             });
@@ -283,24 +284,87 @@ impl App {
         });
     }
 
-    /// Displays the latest completed receipt with no controls that can alter it.
+    /// Displays the selected completed receipt read-only, with footer navigation through history.
     pub(crate) fn previous_order_window(&mut self, ctx: &egui::Context) {
-        let Some(receipt) = self.receipts.last().cloned() else {
+        if self.receipts.is_empty() {
             self.show_previous_order = false;
             return;
-        };
-        egui::Window::new("Dernière commande validée")
+        }
+        self.history_receipt_index = self.history_receipt_index.min(self.receipts.len() - 1);
+        let receipt = self.receipts[self.history_receipt_index].clone();
+        let screen_height = ctx.screen_rect().height();
+        let content_height = receipt
+            .items
+            .iter()
+            .map(|item| 58.0 + item.toppings.len() as f32 * 24.0)
+            .sum::<f32>();
+        let desired_height = (content_height + 190.0).min((screen_height - 40.0).max(240.0));
+        let mut close_history = false;
+        egui::Window::new("Historique des commandes")
             .open(&mut self.show_previous_order)
             .resizable(true)
             .collapsible(false)
-            .default_size([620.0, 560.0])
+            .default_size([620.0, desired_height])
+            .max_size([
+                ctx.screen_rect().width() - 24.0,
+                (screen_height - 24.0).max(240.0),
+            ])
             .show(ctx, |ui| {
+                // Reserve a stable header slot; navigation stays anchored above variable order content.
+                let header_width = ui.available_width();
+                let (header_rect, _) =
+                    ui.allocate_exact_size(egui::vec2(header_width, 48.0), egui::Sense::hover());
+                let button_y = header_rect.center().y - 20.0;
+                let previous_rect = egui::Rect::from_min_size(
+                    egui::pos2(header_rect.left(), button_y),
+                    egui::vec2(48.0, 40.0),
+                );
+                let close_rect = egui::Rect::from_min_size(
+                    egui::pos2(header_rect.center().x - 44.0, button_y),
+                    egui::vec2(88.0, 40.0),
+                );
+                let next_rect = egui::Rect::from_min_size(
+                    egui::pos2(header_rect.right() - 48.0, button_y),
+                    egui::vec2(48.0, 40.0),
+                );
+                let previous_clicked = ui
+                    .allocate_new_ui(egui::UiBuilder::new().max_rect(previous_rect), |ui| {
+                        ui.add_enabled(self.history_receipt_index > 0, egui::Button::new("◀"))
+                            .on_hover_text("Commande précédente")
+                    })
+                    .inner
+                    .clicked();
+                let close_clicked = ui
+                    .allocate_new_ui(egui::UiBuilder::new().max_rect(close_rect), |ui| {
+                        ui.button("Fermer")
+                    })
+                    .inner
+                    .clicked();
+                let next_clicked = ui
+                    .allocate_new_ui(egui::UiBuilder::new().max_rect(next_rect), |ui| {
+                        ui.add_enabled(
+                            self.history_receipt_index + 1 < self.receipts.len(),
+                            egui::Button::new("▶"),
+                        )
+                        .on_hover_text("Commande suivante")
+                    })
+                    .inner
+                    .clicked();
+                if previous_clicked {
+                    self.history_receipt_index -= 1;
+                }
+                if close_clicked {
+                    close_history = true;
+                }
+                if next_clicked {
+                    self.history_receipt_index += 1;
+                }
                 if let Some(completed_at) = Local.timestamp_opt(receipt.completed_at, 0).single() {
                     ui.label(completed_at.format("%d/%m/%Y à %H:%M").to_string());
                 }
                 ui.add_space(8.0);
                 egui::ScrollArea::vertical()
-                    .max_height((ui.available_height() - 80.0).max(160.0))
+                    .max_height((desired_height - 180.0).max(100.0))
                     .show(ui, |ui| {
                         for item in &receipt.items {
                             let color = egui::Color32::from_rgb(
@@ -364,5 +428,8 @@ impl App {
                     });
                 });
             });
+        if close_history {
+            self.show_previous_order = false;
+        }
     }
 }
