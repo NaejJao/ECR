@@ -7,11 +7,13 @@ fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1280.0, 800.0])
-            .with_min_inner_size([900.0, 600.0]),
+            .with_min_inner_size([900.0, 600.0])
+            .with_maximized(true)
+            .with_fullscreen(true),
         ..Default::default()
     };
     eframe::run_native(
-        "ECR — Snack Shop",
+        "ECR — WaffleTime",
         options,
         Box::new(|_| Ok(Box::new(App::default()))),
     )
@@ -111,19 +113,19 @@ impl Default for App {
                 (m.categories, m.colors, m.products, false)
             }
             Some(_) => (
-                vec!["Waffles".into(), "Drinks".into()],
+                vec!["Gaufres".into(), "Boissons".into()],
                 Vec::new(),
                 Vec::new(),
                 true,
             ),
             None if menu_exists => (
-                vec!["Waffles".into(), "Drinks".into()],
+                vec!["Gaufres".into(), "Boissons".into()],
                 Vec::new(),
                 Vec::new(),
                 true,
             ),
             None => (
-                vec!["Waffles".into(), "Drinks".into()],
+                vec!["Gaufres".into(), "Boissons".into()],
                 Vec::new(),
                 Vec::new(),
                 false,
@@ -171,12 +173,12 @@ impl Default for App {
         }
         if app.menu_bad {
             app.message = Some(
-                "Could not load the saved menu. Fix or remove menu.json before making changes."
+                "Impossible de charger le menu enregistré. Corrigez ou supprimez menu.json avant toute modification."
                     .into(),
             );
         }
         if app.history_bad {
-            app.message = Some("Could not load saved order history. Completing sales is disabled to protect the file.".into());
+            app.message = Some("Impossible de charger l’historique des commandes. La validation est désactivée pour protéger le fichier.".into());
         }
         app
     }
@@ -199,6 +201,8 @@ impl eframe::App for App {
         ctx.style_mut(|s| {
             s.spacing.item_spacing = egui::vec2(12.0, 10.0);
             s.spacing.button_padding = egui::vec2(14.0, 10.0);
+            s.text_styles
+                .insert(egui::TextStyle::Button, egui::FontId::proportional(18.0));
         });
 
         egui::TopBottomPanel::top("header")
@@ -216,7 +220,7 @@ impl eframe::App for App {
                     );
                     ui.separator();
                     ui.label(
-                        egui::RichText::new("Snack Shop")
+                        egui::RichText::new("WaffleTime")
                             .size(25.0)
                             .strong()
                             .color(egui::Color32::WHITE),
@@ -224,9 +228,9 @@ impl eframe::App for App {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui
                             .add(header_button(if self.screen == Screen::Order {
-                                "⚙  Manage menu"
+                                "⚙  Gérer le menu"
                             } else {
-                                "←  Back to order"
+                                "←  Retour à la commande"
                             }))
                             .clicked()
                         {
@@ -238,7 +242,7 @@ impl eframe::App for App {
                             self.message = None;
                         }
                         if self.screen == Screen::Order
-                            && ui.add(header_button("Daily overview")).clicked()
+                            && ui.add(header_button("Bilan du jour")).clicked()
                         {
                             self.screen = Screen::Daily;
                             self.message = None;
@@ -271,8 +275,8 @@ impl App {
                     .inner_margin(egui::Margin::same(20)),
             )
             .resizable(true)
-            .default_width(390.0)
-            .min_width(320.0)
+            .default_width(450.0)
+            .min_width(380.0)
             .show(ctx, |ui| self.order_panel(ui));
         egui::CentralPanel::default()
             .frame(page_frame())
@@ -316,7 +320,9 @@ impl App {
                     .collect();
                 let cols = ((ui.available_width().max(240.0) / 190.0).floor() as usize).clamp(1, 5);
                 if items.is_empty() {
-                    ui.label("No products in this category. Add products in Manage menu.");
+                    ui.label(
+                        "Aucun produit dans cette catégorie. Ajoutez-en dans « Gérer le menu ».",
+                    );
                 } else {
                     egui::Grid::new("product_buttons")
                         .num_columns(cols)
@@ -329,13 +335,19 @@ impl App {
                                 } else {
                                     egui::Color32::from_rgb(theme[0], theme[1], theme[2])
                                 };
-                                let button = egui::Button::new(
-                                    egui::RichText::new(format!("{name}\n\n{}", money(*price)))
-                                        .size(21.0)
-                                        .strong(),
-                                )
-                                .fill(fill)
-                                .min_size([180.0, 124.0].into());
+                                let mut label = egui::text::LayoutJob::default();
+                                let mut name_style = egui::TextFormat::default();
+                                name_style.font_id = egui::FontId::proportional(24.0);
+                                name_style.color = egui::Color32::from_rgb(35, 73, 53);
+                                label.append(name, 0.0, name_style);
+                                label.append("\n", 0.0, egui::TextFormat::default());
+                                let mut price_style = egui::TextFormat::default();
+                                price_style.font_id = egui::FontId::proportional(15.0);
+                                price_style.color = egui::Color32::from_rgb(70, 82, 72);
+                                label.append(&money(*price), 0.0, price_style);
+                                let button = egui::Button::new(label)
+                                    .fill(fill)
+                                    .min_size([180.0, 124.0].into());
                                 if ui.add(button).clicked() {
                                     self.add_product(name, *price, *topping, *category);
                                 }
@@ -349,7 +361,7 @@ impl App {
     }
 
     fn order_panel(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Order");
+        ui.heading("Commande");
         ui.separator();
         let mut remove = None;
         egui::ScrollArea::vertical()
@@ -372,7 +384,21 @@ impl App {
                         (topping_category, ordinal)
                     })
                     .collect();
-                for (i, item) in self.order.iter_mut().enumerate() {
+                let mut display_indices: Vec<usize> = (0..self.order.len()).collect();
+                display_indices.sort_by_key(|&index| {
+                    let category = self.order[index].category_index;
+                    if self
+                        .products
+                        .iter()
+                        .any(|product| product.category == category && product.topping)
+                    {
+                        0
+                    } else {
+                        1
+                    }
+                });
+                for i in display_indices {
+                    let item = &mut self.order[i];
                     let tint = egui::Color32::from_rgb(item.theme[0], item.theme[1], item.theme[2]);
                     egui::Frame::new()
                         .fill(tint)
@@ -380,10 +406,15 @@ impl App {
                         .inner_margin(egui::Margin::symmetric(8, 5))
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
-                                let title = if numbered[i].0 {
-                                    format!("{} {}", item.name, numbered[i].1)
+                                let item_name = if item.quantity > 1 {
+                                    format!("{} × {}", item.quantity, item.name)
                                 } else {
                                     item.name.clone()
+                                };
+                                let title = if numbered[i].0 {
+                                    format!("{} {}", item_name, numbered[i].1)
+                                } else {
+                                    item_name
                                 };
                                 ui.label(egui::RichText::new(title).size(15.0).strong());
                                 ui.with_layout(
@@ -396,49 +427,44 @@ impl App {
                                             remove = Some((i, None));
                                         }
                                         ui.label(
-                                            egui::RichText::new(money(item.price))
-                                                .size(14.0)
-                                                .strong(),
+                                            egui::RichText::new(money(
+                                                item.price.saturating_mul(u64::from(item.quantity)),
+                                            ))
+                                            .size(14.0)
+                                            .strong(),
                                         );
                                     },
                                 );
                             });
                             ui.indent(("toppings", i), |ui| {
                                 for (j, topping) in item.toppings.iter().enumerate() {
-                                    egui::Frame::new()
-                                        .fill(egui::Color32::from_rgba_unmultiplied(
-                                            255, 255, 255, 190,
-                                        ))
-                                        .corner_radius(egui::CornerRadius::same(7))
-                                        .inner_margin(egui::Margin::symmetric(8, 3))
-                                        .show(ui, |ui| {
-                                            ui.horizontal(|ui| {
+                                    ui.horizontal(|ui| {
+                                        let name = if topping.quantity > 1 {
+                                            format!("↳ {} × {}", topping.quantity, topping.name)
+                                        } else {
+                                            format!("↳ {}", topping.name)
+                                        };
+                                        ui.label(egui::RichText::new(name).size(14.0));
+                                        ui.with_layout(
+                                            egui::Layout::right_to_left(egui::Align::Center),
+                                            |ui| {
+                                                if ui
+                                                    .add_sized([32.0, 30.0], egui::Button::new("×"))
+                                                    .clicked()
+                                                {
+                                                    remove = Some((i, Some(j)));
+                                                }
                                                 ui.label(
-                                                    egui::RichText::new(format!(
-                                                        "↳  {}",
-                                                        topping.name
+                                                    egui::RichText::new(money(
+                                                        topping.price.saturating_mul(u64::from(
+                                                            topping.quantity,
+                                                        )),
                                                     ))
                                                     .size(13.0),
                                                 );
-                                                ui.with_layout(
-                                                    egui::Layout::right_to_left(
-                                                        egui::Align::Center,
-                                                    ),
-                                                    |ui| {
-                                                        if ui
-                                                            .add_sized(
-                                                                [28.0, 26.0],
-                                                                egui::Button::new("×"),
-                                                            )
-                                                            .clicked()
-                                                        {
-                                                            remove = Some((i, Some(j)));
-                                                        }
-                                                        ui.label(money(topping.price));
-                                                    },
-                                                );
-                                            });
-                                        });
+                                            },
+                                        );
+                                    });
                                 }
                             });
                         });
@@ -453,30 +479,37 @@ impl App {
             }
         }
         ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
-            ui.separator();
-            ui.horizontal(|ui| {
-                ui.label(egui::RichText::new("Total").size(20.0).strong());
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.heading(money(self.total()))
-                });
-            });
             ui.horizontal(|ui| {
                 if ui
                     .add_enabled(
                         !self.order.is_empty(),
-                        primary_button("Complete order", [ui.available_width() * 0.62, 58.0]),
+                        primary_button("Valider la commande", [ui.available_width() * 0.62, 58.0]),
                     )
                     .clicked()
                 {
                     self.complete();
                 }
                 if ui
-                    .add_sized([ui.available_width(), 58.0], egui::Button::new("Clear"))
+                    .add_sized([ui.available_width(), 58.0], egui::Button::new("Effacer"))
                     .clicked()
                 {
                     self.order.clear();
                 }
             });
+            ui.add_space(8.0);
+            egui::Frame::new()
+                .fill(egui::Color32::from_rgb(235, 243, 235))
+                .corner_radius(egui::CornerRadius::same(12))
+                .inner_margin(egui::Margin::symmetric(14, 10))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(egui::RichText::new("À PAYER").size(16.0).strong());
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(egui::RichText::new(money(self.total())).size(36.0).strong());
+                        });
+                    });
+                });
+            ui.separator();
             if let Some(message) = &self.message {
                 ui.label(message);
             }
@@ -500,14 +533,38 @@ impl App {
                 .rev()
                 .find(|x| x.category_index == category)
             {
-                parent.toppings.push(item);
+                if let Some(existing) = parent
+                    .toppings
+                    .iter_mut()
+                    .find(|x| x.name == item.name && x.price == item.price)
+                {
+                    existing.quantity = existing.quantity.saturating_add(1);
+                } else {
+                    parent.toppings.push(item);
+                }
             } else {
                 self.message = Some(format!(
-                    "Add a main {} item before choosing its topping.",
+                    "Ajoutez d’abord un produit principal de la catégorie {} avant sa garniture.",
                     self.categories[category]
                 ));
             }
         } else {
+            let category_has_toppings = self
+                .products
+                .iter()
+                .any(|product| product.category == category && product.topping);
+            if !category_has_toppings {
+                if let Some(existing) = self.order.iter_mut().find(|line| {
+                    line.category_index == category
+                        && line.name == item.name
+                        && line.price == item.price
+                        && line.toppings.is_empty()
+                }) {
+                    existing.quantity = existing.quantity.saturating_add(1);
+                    self.message = None;
+                    return;
+                }
+            }
             self.order.push(item);
             self.message = None;
         }
@@ -519,7 +576,7 @@ impl App {
     }
     fn complete(&mut self) {
         if self.history_bad {
-            self.message=Some("Order history could not be loaded; completing orders is disabled to protect the file.".into());
+            self.message=Some("Impossible de charger l’historique. La validation est désactivée pour protéger le fichier.".into());
             return;
         }
         if self.order.is_empty() {
@@ -533,11 +590,11 @@ impl App {
         match self.save_orders() {
             Ok(()) => {
                 self.order.clear();
-                self.message = Some("Order completed and saved.".into());
+                self.message = Some("Commande validée et enregistrée.".into());
             }
             Err(e) => {
                 self.receipts.pop();
-                self.message = Some(format!("Could not save order: {e}"));
+                self.message = Some(format!("Impossible d’enregistrer la commande : {e}"));
             }
         }
     }
@@ -558,7 +615,7 @@ impl App {
     fn save_menu(&mut self) {
         if self.menu_bad {
             self.message =
-                Some("Menu loading failed; fix or remove menu.json before saving changes.".into());
+                Some("Impossible de charger le menu. Corrigez ou supprimez menu.json avant d’enregistrer.".into());
             return;
         }
         let result = (|| {
@@ -585,32 +642,32 @@ impl App {
             )
         })();
         if let Err(e) = result {
-            self.message = Some(format!("Could not save menu: {e}"));
+            self.message = Some(format!("Impossible d’enregistrer le menu : {e}"));
         }
     }
     fn menu_ui(&mut self, ui: &mut egui::Ui) {
         page_heading(
             ui,
-            "SETUP",
-            "Menu management",
-            "Configure categories, their colors, products, and toppings.",
+            "CONFIGURATION",
+            "Gestion du menu",
+            "Gérez les catégories, leurs couleurs, les produits et les garnitures.",
         );
         ui.add_space(16.0);
         ui.columns(2, |cols| {
-            cols[0].label(egui::RichText::new("CATEGORIES").strong());
+            cols[0].label(egui::RichText::new("CATÉGORIES").strong());
             card().show(&mut cols[0], |ui| {
                 ui.horizontal(|ui| {
                     ui.text_edit_singleline(&mut self.new_category)
-                        .on_hover_text("Category name");
+                        .on_hover_text("Nom de la catégorie");
                     if ui
-                        .add(primary_button("Add category", [135.0, 42.0]))
+                        .add(primary_button("Ajouter la catégorie", [135.0, 42.0]))
                         .clicked()
                     {
                         let n = self.new_category.trim();
                         if n.is_empty() {
-                            self.message = Some("Enter a category name.".into());
+                            self.message = Some("Saisissez un nom de catégorie.".into());
                         } else if self.categories.iter().any(|x| x.eq_ignore_ascii_case(n)) {
-                            self.message = Some("That category already exists.".into());
+                            self.message = Some("Cette catégorie existe déjà.".into());
                         } else {
                             self.categories.push(n.into());
                             self.colors.push(theme(self.colors.len()));
@@ -632,13 +689,13 @@ impl App {
                         }
                         let occupied = self.products.iter().any(|p| p.category == i);
                         if ui
-                            .add_enabled(!occupied, egui::Button::new("Delete"))
+                            .add_enabled(!occupied, egui::Button::new("Supprimer"))
                             .clicked()
                         {
                             delete_cat = Some(i);
                         }
                         if occupied {
-                            ui.small("Remove its products first");
+                            ui.small("Supprimez d’abord ses produits");
                         }
                     });
                 });
@@ -660,19 +717,19 @@ impl App {
                     .min(self.categories.len().saturating_sub(1));
                 self.save_menu();
             }
-            cols[1].label(egui::RichText::new("PRODUCTS").strong());
+            cols[1].label(egui::RichText::new("PRODUITS").strong());
             if self.categories.is_empty() {
-                cols[1].label("Add a category first.");
+                cols[1].label("Ajoutez d’abord une catégorie.");
             } else {
                 card().show(&mut cols[1], |ui| {
                     ui.horizontal(|ui| {
                         ui.add(
                             egui::TextEdit::singleline(&mut self.new_name)
-                                .hint_text("Product name"),
+                                .hint_text("Nom du produit"),
                         );
                         ui.add(
                             egui::TextEdit::singleline(&mut self.new_price)
-                                .hint_text("Price, e.g. 4.50")
+                                .hint_text("Prix, ex. 4,50")
                                 .desired_width(100.0),
                         );
                     });
@@ -683,14 +740,14 @@ impl App {
                                 ui.selectable_value(&mut self.new_category_index, i, c);
                             }
                         });
-                    ui.checkbox(&mut self.new_topping, "This is a topping");
+                    ui.checkbox(&mut self.new_topping, "C’est une garniture");
                     if ui
-                        .add(primary_button("Add product", [140.0, 42.0]))
+                        .add(primary_button("Ajouter le produit", [140.0, 42.0]))
                         .clicked()
                     {
                         let n = self.new_name.trim();
                         if n.is_empty() {
-                            self.message = Some("Enter a product name.".into());
+                            self.message = Some("Saisissez un nom de produit.".into());
                         } else if let Some(price) = parse_price(&self.new_price) {
                             self.products.push(Product {
                                 name: n.into(),
@@ -703,7 +760,8 @@ impl App {
                             self.new_topping = false;
                             self.save_menu();
                         } else {
-                            self.message = Some("Enter a valid price greater than zero.".into());
+                            self.message =
+                                Some("Saisissez un prix valide supérieur à zéro.".into());
                         }
                     }
                 });
@@ -717,7 +775,7 @@ impl App {
                                     egui::TextEdit::singleline(&mut self.edit_price)
                                         .desired_width(90.0),
                                 );
-                                ui.checkbox(&mut self.edit_topping, "Topping");
+                                ui.checkbox(&mut self.edit_topping, "Garniture");
                             });
                             egui::ComboBox::from_id_salt(("editcat", i))
                                 .selected_text(&self.categories[self.edit_category])
@@ -728,12 +786,12 @@ impl App {
                                 });
                             ui.horizontal(|ui| {
                                 if ui
-                                    .add(primary_button("Save changes", [145.0, 42.0]))
+                                    .add(primary_button("Enregistrer", [145.0, 42.0]))
                                     .clicked()
                                 {
                                     let n = self.edit_name.trim();
                                     if n.is_empty() {
-                                        self.message = Some("Enter a product name.".into());
+                                        self.message = Some("Saisissez un nom de produit.".into());
                                     } else if let Some(price) = parse_price(&self.edit_price) {
                                         self.products[i] = Product {
                                             name: n.into(),
@@ -744,10 +802,10 @@ impl App {
                                         self.edit_product = None;
                                         self.save_menu();
                                     } else {
-                                        self.message = Some("Enter a valid price.".into());
+                                        self.message = Some("Saisissez un prix valide.".into());
                                     }
                                 }
-                                if ui.button("Cancel").clicked() {
+                                if ui.button("Annuler").clicked() {
                                     self.edit_product = None;
                                 }
                             });
@@ -766,17 +824,17 @@ impl App {
                                     p.name,
                                     money(p.price),
                                     cat,
-                                    if p.topping { " · Topping" } else { "" }
+                                    if p.topping { " · Garniture" } else { "" }
                                 ));
-                                if ui.button("Edit").clicked() {
+                                if ui.button("Modifier").clicked() {
                                     self.edit_name = p.name.clone();
                                     self.edit_price =
-                                        format!("{}.{:02}", p.price / 100, p.price % 100);
+                                        format!("{},{:02}", p.price / 100, p.price % 100);
                                     self.edit_category = p.category;
                                     self.edit_topping = p.topping;
                                     self.edit_product = Some(i);
                                 }
-                                if ui.button("Delete").clicked() {
+                                if ui.button("Supprimer").clicked() {
                                     delete_product = Some(i);
                                 }
                             });
@@ -811,19 +869,19 @@ impl App {
         let counts = main_item_counts(&orders, &self.categories);
         page_heading(
             ui,
-            "SALES",
-            "Daily overview",
-            "A quick summary of today's completed orders.",
+            "VENTES",
+            "Bilan du jour",
+            "Résumé des commandes terminées aujourd’hui.",
         );
         ui.add_space(16.0);
-        ui.label(date.format("%A, %d %B %Y").to_string());
+        ui.label(date.format("%d/%m/%Y").to_string());
         ui.add_space(16.0);
         ui.horizontal(|ui| {
-            overview_card(ui, "Order count", orders.len().to_string());
-            overview_card(ui, "Total sale", money(total));
+            overview_card(ui, "Commandes", orders.len().to_string());
+            overview_card(ui, "Total des ventes", money(total));
         });
         ui.add_space(20.0);
-        ui.label(egui::RichText::new("MAIN ITEMS BY CATEGORY").strong());
+        ui.label(egui::RichText::new("ARTICLES PRINCIPAUX PAR CATÉGORIE").strong());
         egui::ScrollArea::vertical()
             .max_height(240.0)
             .show(ui, |ui| {
@@ -852,19 +910,19 @@ impl App {
             });
         ui.add_space(20.0);
         ui.separator();
-        ui.label(egui::RichText::new("END-OF-DAY EXPORT").strong());
-        ui.heading("Save order details to USB");
-        ui.label("Enter the mounted USB folder. A dated JSON file will include full order and item details.");
+        ui.label(egui::RichText::new("EXPORT DE FIN DE JOURNÉE").strong());
+        ui.heading("Enregistrer le détail des commandes sur USB");
+        ui.label("Saisissez le chemin du dossier USB monté. Un fichier JSON daté contiendra le détail des commandes et des articles.");
         ui.horizontal(|ui| {
             ui.add(
                 egui::TextEdit::singleline(&mut self.export_directory)
-                    .hint_text("USB folder, e.g. /media/you/USB")
+                    .hint_text("Dossier USB, ex. /media/vous/USB")
                     .desired_width(520.0),
             );
             if ui
                 .add_enabled(
                     !orders.is_empty(),
-                    primary_button("Export today's orders", [250.0, 48.0]),
+                    primary_button("Exporter les commandes", [250.0, 48.0]),
                 )
                 .clicked()
             {
@@ -872,7 +930,7 @@ impl App {
             }
         });
         if orders.is_empty() {
-            ui.label("No completed orders today.");
+            ui.label("Aucune commande terminée aujourd’hui.");
         }
         if let Some(m) = &self.message {
             ui.label(m);
@@ -881,7 +939,7 @@ impl App {
     fn export(&mut self, date: chrono::NaiveDate, orders: &[Receipt]) {
         let dir = self.export_directory.trim();
         if dir.is_empty() {
-            self.message = Some("Enter the USB folder path.".into());
+            self.message = Some("Saisissez le chemin du dossier USB.".into());
             return;
         }
         let path = PathBuf::from(dir).join(format!("ecr-orders-{}.json", date.format("%Y-%m-%d")));
@@ -900,8 +958,12 @@ impl App {
                 f.sync_all()
             });
         self.message = Some(match res {
-            Ok(()) => format!("Exported {} orders to {}", orders.len(), path.display()),
-            Err(e) => format!("Export failed: {e}"),
+            Ok(()) => format!(
+                "{} commandes exportées vers {}",
+                orders.len(),
+                path.display()
+            ),
+            Err(e) => format!("Échec de l’export : {e}"),
         });
     }
 }
@@ -926,10 +988,11 @@ impl Item {
 }
 fn parse_price(s: &str) -> Option<u64> {
     let s = s.trim();
-    if s.is_empty() || s.starts_with('-') {
+    if s.is_empty() || s.starts_with('-') || (s.contains(',') && s.contains('.')) {
         return None;
     }
-    let mut p = s.split('.');
+    let normalized = s.replace(',', ".");
+    let mut p = normalized.split('.');
     let whole = p.next()?.parse::<u64>().ok()?;
     let frac = p.next().unwrap_or("0");
     if p.next().is_some() || frac.len() > 2 || !frac.bytes().all(|b| b.is_ascii_digit()) {
@@ -944,7 +1007,7 @@ fn parse_price(s: &str) -> Option<u64> {
     whole.checked_mul(100)?.checked_add(c).filter(|x| *x > 0)
 }
 fn money(c: u64) -> String {
-    format!("{}.{:02}", c / 100, c % 100)
+    format!("{},{:02}", c / 100, c % 100)
 }
 fn data_path(file: &str) -> Result<PathBuf, String> {
     #[cfg(target_os = "windows")]
@@ -957,7 +1020,7 @@ fn data_path(file: &str) -> Result<PathBuf, String> {
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|x| PathBuf::from(x).join(".local/share")));
     base.map(|p| p.join("ecr").join(file))
-        .ok_or_else(|| "Cannot find app data directory".into())
+        .ok_or_else(|| "Impossible de trouver le dossier de données de l’application".into())
 }
 fn main_item_counts(orders: &[Receipt], categories: &[String]) -> BTreeMap<String, u64> {
     let mut counts = BTreeMap::new();
@@ -971,7 +1034,7 @@ fn main_item_counts(orders: &[Receipt], categories: &[String]) -> BTreeMap<Strin
     }
     for item in orders.iter().flat_map(|order| &order.items) {
         let recorded = if item.category.trim().is_empty() {
-            "Uncategorized"
+            "Non catégorisé"
         } else {
             item.category.trim()
         };
