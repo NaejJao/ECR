@@ -1,7 +1,16 @@
-use crate::model::{Item, Receipt};
+//! Business rules and formatting shared by the user interface and application state.
+//!
+//! This module contains no screen layout. It owns price parsing, category
+//! reconciliation, sale counting, and the rules for associating toppings.
 
+use crate::model::{Item, Receipt};
 use std::{collections::BTreeMap, path::PathBuf};
 
+/// Attaches a topping to the most recently added base item in the given category.
+///
+/// Returns `Some(true)` when newly attached, `Some(false)` when that same topping
+/// is already on the base item, and `None` when no matching base item exists.
+/// A repeated click is deliberately a no-op: toppings are unique per base item.
 pub(crate) fn attach_topping(order: &mut [Item], topping: Item, category: usize) -> Option<bool> {
     let parent = order
         .iter_mut()
@@ -18,6 +27,10 @@ pub(crate) fn attach_topping(order: &mut [Item], topping: Item, category: usize)
     Some(true)
 }
 
+/// Parses a positive price entered with either a decimal comma or decimal point.
+///
+/// Returns the value in centimes. Inputs with more than two fractional digits,
+/// both decimal separators, negative values, or zero are rejected.
 pub(crate) fn parse_price(s: &str) -> Option<u64> {
     let s = s.trim();
     if s.is_empty() || s.starts_with('-') || (s.contains(',') && s.contains('.')) {
@@ -39,10 +52,15 @@ pub(crate) fn parse_price(s: &str) -> Option<u64> {
     whole.checked_mul(100)?.checked_add(c).filter(|x| *x > 0)
 }
 
+/// Formats an amount stored in centimes using French decimal and currency notation.
 pub(crate) fn money(c: u64) -> String {
     format!("{},{:02} €", c / 100, c % 100)
 }
 
+/// Resolves the platform-specific application data directory and appends `file`.
+///
+/// Uses `%APPDATA%` on Windows, Application Support on macOS, and XDG data
+/// storage (or `~/.local/share`) on Linux and other Unix-like systems.
 pub(crate) fn data_path(file: &str) -> Result<PathBuf, String> {
     #[cfg(target_os = "windows")]
     let base = std::env::var_os("APPDATA").map(PathBuf::from);
@@ -57,6 +75,10 @@ pub(crate) fn data_path(file: &str) -> Result<PathBuf, String> {
         .ok_or_else(|| "Impossible de trouver le dossier de données de l’application".into())
 }
 
+/// Counts sold base items by category, excluding their nested toppings.
+///
+/// Current menu categories are initialized to zero so unsold categories remain
+/// visible in the daily report. Legacy category names are reconciled when possible.
 pub(crate) fn main_item_counts(orders: &[Receipt], categories: &[String]) -> BTreeMap<String, u64> {
     let mut counts = BTreeMap::new();
     for category in categories {
@@ -80,6 +102,7 @@ pub(crate) fn main_item_counts(orders: &[Receipt], categories: &[String]) -> BTr
     counts
 }
 
+/// Orders category totals by the menu's configured order, then appends legacy names.
 pub(crate) fn ordered_category_counts(
     counts: &BTreeMap<String, u64>,
     categories: &[String],
@@ -109,6 +132,10 @@ pub(crate) fn ordered_category_counts(
     ordered
 }
 
+/// Aggregates base products sold in one category as `(quantity, subtotal)` pairs.
+///
+/// Toppings are intentionally omitted from the breakdown; their amounts are
+/// already included in each completed receipt's total.
 pub(crate) fn main_products_in_category(
     orders: &[Receipt],
     selected_category: &str,
@@ -133,6 +160,11 @@ pub(crate) fn main_products_in_category(
     details
 }
 
+/// Maps a recorded category name to its current menu name when unambiguous.
+///
+/// Matching first ignores letter case. A single one-edit spelling difference is
+/// accepted only for category names of at least six characters; ambiguous matches
+/// and larger differences are preserved as separate historical categories.
 pub(crate) fn canonical_category(recorded: &str, categories: &[String]) -> String {
     if let Some(exact) = categories
         .iter()
@@ -153,6 +185,7 @@ pub(crate) fn canonical_category(recorded: &str, categories: &[String]) -> Strin
     }
 }
 
+/// Returns whether two strings differ by at most one insertion, deletion, or replacement.
 pub(crate) fn one_edit_apart(left: &str, right: &str) -> bool {
     let left: Vec<char> = left.to_lowercase().chars().collect();
     let right: Vec<char> = right.to_lowercase().chars().collect();
@@ -185,6 +218,7 @@ pub(crate) fn one_edit_apart(left: &str, right: &str) -> bool {
     edits <= 1
 }
 
+/// Returns the stable RGB palette entry for a category position.
 pub(crate) fn theme(i: usize) -> [u8; 3] {
     [
         [210, 232, 211],
@@ -198,6 +232,7 @@ pub(crate) fn theme(i: usize) -> [u8; 3] {
     ][i % 8]
 }
 
+/// Provides the default pale-green theme for older records without stored colors.
 pub(crate) fn default_theme() -> [u8; 3] {
     theme(0)
 }

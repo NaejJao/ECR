@@ -1,3 +1,5 @@
+//! Regression tests for menu compatibility, category reporting, and topping rules.
+
 use crate::{domain::*, model::*};
 #[test]
 fn previous_menu_json_schema_still_loads_products_and_categories() {

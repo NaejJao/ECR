@@ -1,3 +1,5 @@
+//! Root UI module: installs the application-wide style and routes to screen modules.
+
 mod daily;
 mod menu;
 mod order;
@@ -10,6 +12,7 @@ use crate::{
 use eframe::egui;
 
 impl eframe::App for App {
+    /// Draws the shared header, applies global styling, and displays the active screen.
     fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
         let mut v = egui::Visuals::light();
         v.window_fill = egui::Color32::from_rgb(247, 247, 243);

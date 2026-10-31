@@ -1,8 +1,14 @@
+//! Touch-first product selection, current-order editing, and previous-order viewing.
+//!
+//! Completed receipts are shown in a separate read-only window; only the open order
+//! exposes remove controls.
+
 use crate::{app::App, domain::*, ui::widgets::*};
 use chrono::{Local, TimeZone};
 use eframe::egui;
 
 impl App {
+    /// Builds the responsive product grid and resizable current-order side panel.
     pub(crate) fn order_ui(&mut self, ctx: &egui::Context) {
         let screen_width = ctx.screen_rect().width();
         let order_width = (screen_width * 0.34).clamp(400.0, 560.0);
@@ -104,6 +110,7 @@ impl App {
             });
     }
 
+    /// Renders the editable in-progress order, its total, and checkout actions.
     pub(crate) fn order_panel(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.heading("Commande");
@@ -276,6 +283,7 @@ impl App {
         });
     }
 
+    /// Displays the latest completed receipt with no controls that can alter it.
     pub(crate) fn previous_order_window(&mut self, ctx: &egui::Context) {
         let Some(receipt) = self.receipts.last().cloned() else {
             self.show_previous_order = false;

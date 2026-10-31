@@ -1,3 +1,7 @@
+//! Binary entry point for the WaffleTime electronic cash registry.
+//!
+//! Runtime state, business rules, data models, and each screen live in dedicated modules.
+
 mod app;
 mod domain;
 mod model;

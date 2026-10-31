@@ -1,7 +1,12 @@
+//! Menu configuration screen for categories, category colors, products, and toppings.
+//!
+//! Product rows are filtered by the selected category and live in their own scroll area.
+
 use crate::{app::App, domain::*, model::Product, ui::widgets::*};
 use eframe::egui;
 
 impl App {
+    /// Renders category editing and category-filtered product management.
     pub(crate) fn menu_ui(&mut self, ui: &mut egui::Ui) {
         page_heading(
             ui,
@@ -39,10 +44,22 @@ impl App {
             for i in 0..self.categories.len() {
                 card().show(&mut cols[0], |ui| {
                     ui.horizontal(|ui| {
+                        let previous_name = self.categories[i].clone();
                         let changed = ui.text_edit_singleline(&mut self.categories[i]).changed();
                         let color_changed =
                             ui.color_edit_button_srgb(&mut self.colors[i]).changed();
-                        if changed || color_changed {
+                        if changed {
+                            let name = self.categories[i].trim();
+                            if name.is_empty() {
+                                self.categories[i] = previous_name;
+                                self.message =
+                                    Some("Le nom d’une catégorie ne peut pas être vide.".into());
+                            } else {
+                                self.categories[i] = name.to_owned();
+                                self.save_menu();
+                            }
+                        }
+                        if color_changed {
                             self.save_menu();
                         }
                         let occupied = self.products.iter().any(|p| p.category == i);
@@ -130,6 +147,12 @@ impl App {
                         let n = self.new_name.trim();
                         if n.is_empty() {
                             self.message = Some("Saisissez un nom de produit.".into());
+                        } else if self.new_topping
+                            && self.products.iter().any(|product| {
+                                product.topping && product.name.eq_ignore_ascii_case(n)
+                            })
+                        {
+                            self.message = Some("Une garniture portant ce nom existe déjà.".into());
                         } else if let Some(price) = parse_price(&self.new_price) {
                             self.products.push(Product {
                                 name: n.into(),
@@ -184,6 +207,19 @@ impl App {
                                             if n.is_empty() {
                                                 self.message =
                                                     Some("Saisissez un nom de produit.".into());
+                                            } else if self.edit_topping
+                                                && self.products.iter().enumerate().any(
+                                                    |(index, product)| {
+                                                        index != i
+                                                            && product.topping
+                                                            && product.name.eq_ignore_ascii_case(n)
+                                                    },
+                                                )
+                                            {
+                                                self.message = Some(
+                                                    "Une garniture portant ce nom existe déjà."
+                                                        .into(),
+                                                );
                                             } else if let Some(price) =
                                                 parse_price(&self.edit_price)
                                             {

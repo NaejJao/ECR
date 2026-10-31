@@ -1,8 +1,11 @@
+//! Daily sales overview, expandable category breakdowns, and USB export controls.
+
 use crate::{app::App, domain::*, ui::widgets::*};
 use chrono::{Local, TimeZone};
 use eframe::egui;
 
 impl App {
+    /// Renders today's order count, sales total, category details, and export panel.
     pub(crate) fn daily_ui(&mut self, ui: &mut egui::Ui) {
         let date = Local::now().date_naive();
         let orders: Vec<_> = self
