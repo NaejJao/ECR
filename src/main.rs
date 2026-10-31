@@ -1,7 +1,13 @@
 use chrono::{Local, TimeZone};
 use eframe::egui;
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, fs, fs::OpenOptions, io::Write, path::PathBuf};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs,
+    fs::OpenOptions,
+    io::Write,
+    path::PathBuf,
+};
 
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
@@ -91,6 +97,7 @@ struct App {
     edit_category: usize,
     edit_topping: bool,
     export_directory: String,
+    expanded_categories: BTreeSet<String>,
     message: Option<String>,
 }
 #[derive(PartialEq, Eq)]
@@ -166,6 +173,7 @@ impl Default for App {
             edit_category: 0,
             edit_topping: false,
             export_directory: String::new(),
+            expanded_categories: BTreeSet::new(),
             message: None,
         };
         if !app.menu_path.exists() {
@@ -247,6 +255,9 @@ impl eframe::App for App {
                             self.screen = Screen::Daily;
                             self.message = None;
                         }
+                        if ui.add(danger_button("⏻  Quitter")).clicked() {
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                        }
                     });
                 });
             });
@@ -268,6 +279,9 @@ impl eframe::App for App {
 
 impl App {
     fn order_ui(&mut self, ctx: &egui::Context) {
+        let screen_width = ctx.screen_rect().width();
+        let order_width = (screen_width * 0.34).clamp(400.0, 560.0);
+        let order_min_width = (screen_width * 0.28).clamp(360.0, 480.0);
         egui::SidePanel::right("order")
             .frame(
                 egui::Frame::new()
@@ -275,8 +289,8 @@ impl App {
                     .inner_margin(egui::Margin::same(20)),
             )
             .resizable(true)
-            .default_width(450.0)
-            .min_width(380.0)
+            .default_width(order_width)
+            .min_width(order_min_width)
             .show(ctx, |ui| self.order_panel(ui));
         egui::CentralPanel::default()
             .frame(page_frame())
@@ -318,7 +332,12 @@ impl App {
                     .filter(|p| p.category == self.selected)
                     .map(|p| (p.name.clone(), p.price, p.topping, p.category))
                     .collect();
-                let cols = ((ui.available_width().max(240.0) / 190.0).floor() as usize).clamp(1, 5);
+                let available_width = ui.available_width().max(240.0);
+                let cols = (available_width / 220.0).round() as usize;
+                let cols = cols.clamp(1, 5);
+                let button_width = ((available_width - 12.0 * cols.saturating_sub(1) as f32)
+                    / cols as f32)
+                    .clamp(190.0, 240.0);
                 if items.is_empty() {
                     ui.label(
                         "Aucun produit dans cette catégorie. Ajoutez-en dans « Gérer le menu ».",
@@ -347,7 +366,7 @@ impl App {
                                 label.append(&money(*price), 0.0, price_style);
                                 let button = egui::Button::new(label)
                                     .fill(fill)
-                                    .min_size([180.0, 124.0].into());
+                                    .min_size([button_width, 124.0].into());
                                 if ui.add(button).clicked() {
                                     self.add_product(name, *price, *topping, *category);
                                 }
@@ -363,9 +382,18 @@ impl App {
     fn order_panel(&mut self, ui: &mut egui::Ui) {
         ui.heading("Commande");
         ui.separator();
+        if let Some(message) = &self.message {
+            ui.label(message);
+        }
+        let total_height =
+            ui.fonts(|fonts| fonts.row_height(&egui::FontId::proportional(36.0))) + 20.0;
+        let action_height = 58.0_f32.max(ui.spacing().interact_size.y);
+        let footer_height =
+            total_height + action_height + 8.0 + ui.spacing().item_spacing.y * 3.0 + 1.0;
+        let list_height = (ui.available_height() - footer_height).max(80.0);
         let mut remove = None;
         egui::ScrollArea::vertical()
-            .max_height((ui.available_height() - 150.0).max(100.0))
+            .max_height(list_height)
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 let numbered: Vec<_> = self
@@ -478,40 +506,37 @@ impl App {
                 self.order.remove(i);
             }
         }
-        ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
-            ui.horizontal(|ui| {
-                if ui
-                    .add_enabled(
-                        !self.order.is_empty(),
-                        primary_button("Valider la commande", [ui.available_width() * 0.62, 58.0]),
-                    )
-                    .clicked()
-                {
-                    self.complete();
-                }
-                if ui
-                    .add_sized([ui.available_width(), 58.0], egui::Button::new("Effacer"))
-                    .clicked()
-                {
-                    self.order.clear();
-                }
-            });
-            ui.add_space(8.0);
-            egui::Frame::new()
-                .fill(egui::Color32::from_rgb(235, 243, 235))
-                .corner_radius(egui::CornerRadius::same(12))
-                .inner_margin(egui::Margin::symmetric(14, 10))
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.label(egui::RichText::new("À PAYER").size(16.0).strong());
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(egui::RichText::new(money(self.total())).size(36.0).strong());
-                        });
+        ui.separator();
+        egui::Frame::new()
+            .fill(egui::Color32::from_rgb(235, 243, 235))
+            .corner_radius(egui::CornerRadius::same(12))
+            .inner_margin(egui::Margin::symmetric(14, 10))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("À PAYER").size(16.0).strong());
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(egui::RichText::new(money(self.total())).size(36.0).strong());
                     });
                 });
-            ui.separator();
-            if let Some(message) = &self.message {
-                ui.label(message);
+            });
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            let button_width =
+                ((ui.available_width() - ui.spacing().item_spacing.x) * 0.62).max(160.0);
+            if ui
+                .add_enabled(
+                    !self.order.is_empty(),
+                    primary_button("Valider la commande", [button_width, 58.0]),
+                )
+                .clicked()
+            {
+                self.complete();
+            }
+            if ui
+                .add_sized([ui.available_width(), 58.0], egui::Button::new("Effacer"))
+                .clicked()
+            {
+                self.order.clear();
             }
         });
     }
@@ -671,6 +696,7 @@ impl App {
                         } else {
                             self.categories.push(n.into());
                             self.colors.push(theme(self.colors.len()));
+                            self.new_category_index = self.categories.len() - 1;
                             self.new_category.clear();
                             self.save_menu();
                         }
@@ -721,6 +747,36 @@ impl App {
             if self.categories.is_empty() {
                 cols[1].label("Ajoutez d’abord une catégorie.");
             } else {
+                cols[1].horizontal_wrapped(|ui| {
+                    for (index, category) in self.categories.iter().enumerate() {
+                        let color = self.colors[index];
+                        let fill = if self.new_category_index == index {
+                            egui::Color32::from_rgb(color[0], color[1], color[2])
+                        } else {
+                            egui::Color32::WHITE
+                        };
+                        let count = self.products.iter().filter(|p| p.category == index).count();
+                        if ui
+                            .add(
+                                egui::Button::new(format!("{category}  ·  {count}"))
+                                    .fill(fill)
+                                    .min_size([150.0, 52.0].into()),
+                            )
+                            .clicked()
+                        {
+                            self.new_category_index = index;
+                            self.edit_product = None;
+                        }
+                    }
+                });
+                cols[1].label(
+                    egui::RichText::new(format!(
+                        "Produits · {}",
+                        self.categories[self.new_category_index]
+                    ))
+                    .size(20.0)
+                    .strong(),
+                );
                 card().show(&mut cols[1], |ui| {
                     ui.horizontal(|ui| {
                         ui.add(
@@ -733,13 +789,7 @@ impl App {
                                 .desired_width(100.0),
                         );
                     });
-                    egui::ComboBox::from_id_salt("newcat")
-                        .selected_text(&self.categories[self.new_category_index])
-                        .show_ui(ui, |ui| {
-                            for (i, c) in self.categories.iter().enumerate() {
-                                ui.selectable_value(&mut self.new_category_index, i, c);
-                            }
-                        });
+
                     ui.checkbox(&mut self.new_topping, "C’est une garniture");
                     if ui
                         .add(primary_button("Ajouter le produit", [140.0, 42.0]))
@@ -766,81 +816,104 @@ impl App {
                     }
                 });
                 let mut delete_product = None;
-                for i in 0..self.products.len() {
-                    if self.edit_product == Some(i) {
-                        card().show(&mut cols[1], |ui| {
-                            ui.horizontal(|ui| {
-                                ui.text_edit_singleline(&mut self.edit_name);
-                                ui.add(
-                                    egui::TextEdit::singleline(&mut self.edit_price)
-                                        .desired_width(90.0),
-                                );
-                                ui.checkbox(&mut self.edit_topping, "Garniture");
-                            });
-                            egui::ComboBox::from_id_salt(("editcat", i))
-                                .selected_text(&self.categories[self.edit_category])
-                                .show_ui(ui, |ui| {
-                                    for (j, c) in self.categories.iter().enumerate() {
-                                        ui.selectable_value(&mut self.edit_category, j, c);
-                                    }
+                let products_list_height = cols[1].available_height().max(180.0);
+                egui::ScrollArea::vertical()
+                    .id_salt("menu_products_list")
+                    .max_height(products_list_height)
+                    .auto_shrink([false, false])
+                    .show(&mut cols[1], |ui| {
+                        for i in 0..self.products.len() {
+                            if self.products[i].category != self.new_category_index {
+                                continue;
+                            }
+                            if self.edit_product == Some(i) {
+                                card().show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.text_edit_singleline(&mut self.edit_name);
+                                        ui.add(
+                                            egui::TextEdit::singleline(&mut self.edit_price)
+                                                .desired_width(90.0),
+                                        );
+                                        ui.checkbox(&mut self.edit_topping, "Garniture");
+                                    });
+                                    egui::ComboBox::from_id_salt(("editcat", i))
+                                        .selected_text(&self.categories[self.edit_category])
+                                        .show_ui(ui, |ui| {
+                                            for (j, c) in self.categories.iter().enumerate() {
+                                                ui.selectable_value(&mut self.edit_category, j, c);
+                                            }
+                                        });
+                                    ui.horizontal(|ui| {
+                                        if ui
+                                            .add(primary_button("Enregistrer", [145.0, 42.0]))
+                                            .clicked()
+                                        {
+                                            let n = self.edit_name.trim();
+                                            if n.is_empty() {
+                                                self.message =
+                                                    Some("Saisissez un nom de produit.".into());
+                                            } else if let Some(price) =
+                                                parse_price(&self.edit_price)
+                                            {
+                                                self.products[i] = Product {
+                                                    name: n.into(),
+                                                    price,
+                                                    category: self.edit_category,
+                                                    topping: self.edit_topping,
+                                                };
+                                                self.edit_product = None;
+                                                self.save_menu();
+                                            } else {
+                                                self.message =
+                                                    Some("Saisissez un prix valide.".into());
+                                            }
+                                        }
+                                        if ui.button("Annuler").clicked() {
+                                            self.edit_product = None;
+                                        }
+                                    });
                                 });
-                            ui.horizontal(|ui| {
-                                if ui
-                                    .add(primary_button("Enregistrer", [145.0, 42.0]))
-                                    .clicked()
-                                {
-                                    let n = self.edit_name.trim();
-                                    if n.is_empty() {
-                                        self.message = Some("Saisissez un nom de produit.".into());
-                                    } else if let Some(price) = parse_price(&self.edit_price) {
-                                        self.products[i] = Product {
-                                            name: n.into(),
-                                            price,
-                                            category: self.edit_category,
-                                            topping: self.edit_topping,
-                                        };
-                                        self.edit_product = None;
-                                        self.save_menu();
+                            } else {
+                                card()
+                                    .fill(if self.products[i].topping {
+                                        egui::Color32::from_rgb(247, 242, 232)
                                     } else {
-                                        self.message = Some("Saisissez un prix valide.".into());
-                                    }
-                                }
-                                if ui.button("Annuler").clicked() {
-                                    self.edit_product = None;
-                                }
-                            });
-                        });
-                    } else {
-                        card().show(&mut cols[1], |ui| {
-                            ui.horizontal(|ui| {
-                                let p = &self.products[i];
-                                let cat = self
-                                    .categories
-                                    .get(p.category)
-                                    .map(String::as_str)
-                                    .unwrap_or("?");
-                                ui.label(format!(
-                                    "{} · {} · {}{}",
-                                    p.name,
-                                    money(p.price),
-                                    cat,
-                                    if p.topping { " · Garniture" } else { "" }
-                                ));
-                                if ui.button("Modifier").clicked() {
-                                    self.edit_name = p.name.clone();
-                                    self.edit_price =
-                                        format!("{},{:02}", p.price / 100, p.price % 100);
-                                    self.edit_category = p.category;
-                                    self.edit_topping = p.topping;
-                                    self.edit_product = Some(i);
-                                }
-                                if ui.button("Supprimer").clicked() {
-                                    delete_product = Some(i);
-                                }
-                            });
-                        });
-                    }
-                }
+                                        egui::Color32::WHITE
+                                    })
+                                    .show(ui, |ui| {
+                                        ui.horizontal(|ui| {
+                                            let p = &self.products[i];
+                                            let cat = self
+                                                .categories
+                                                .get(p.category)
+                                                .map(String::as_str)
+                                                .unwrap_or("?");
+                                            ui.label(format!(
+                                                "{} · {} · {}{}",
+                                                p.name,
+                                                money(p.price),
+                                                cat,
+                                                if p.topping { " · Garniture" } else { "" }
+                                            ));
+                                            if ui.button("Modifier").clicked() {
+                                                self.edit_name = p.name.clone();
+                                                self.edit_price = format!(
+                                                    "{},{:02}",
+                                                    p.price / 100,
+                                                    p.price % 100
+                                                );
+                                                self.edit_category = p.category;
+                                                self.edit_topping = p.topping;
+                                                self.edit_product = Some(i);
+                                            }
+                                            if ui.button("Supprimer").clicked() {
+                                                delete_product = Some(i);
+                                            }
+                                        });
+                                    });
+                            }
+                        }
+                    });
                 if let Some(i) = delete_product {
                     self.products.remove(i);
                     self.edit_product = None;
@@ -867,73 +940,135 @@ impl App {
             .collect();
         let total = orders.iter().fold(0_u64, |s, o| s.saturating_add(o.total));
         let counts = main_item_counts(&orders, &self.categories);
+        let ordered_counts = ordered_category_counts(&counts, &self.categories);
         page_heading(
             ui,
             "VENTES",
             "Bilan du jour",
             "Résumé des commandes terminées aujourd’hui.",
         );
-        ui.add_space(16.0);
-        ui.label(date.format("%d/%m/%Y").to_string());
-        ui.add_space(16.0);
         ui.horizontal(|ui| {
-            overview_card(ui, "Commandes", orders.len().to_string());
-            overview_card(ui, "Total des ventes", money(total));
+            ui.label(date.format("%d/%m/%Y").to_string());
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.small("Les garnitures sont incluses dans les ventes, pas dans les quantités par catégorie.");
+            });
         });
-        ui.add_space(20.0);
+        ui.add_space(12.0);
+        ui.columns(2, |cols| {
+            card().show(&mut cols[0], |ui| {
+                ui.label(egui::RichText::new("APERÇU DU JOUR").strong());
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    overview_card(ui, "Commandes", orders.len().to_string());
+                    overview_card(ui, "Total des ventes", money(total));
+                });
+            });
+            card().show(&mut cols[1], |ui| {
+                ui.label(egui::RichText::new("EXPORT DE FIN DE JOURNÉE").strong());
+                ui.add_space(8.0);
+                ui.label("Enregistrer le détail des commandes sur USB");
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.export_directory)
+                        .hint_text("Dossier USB, ex. /media/vous/USB")
+                        .desired_width(ui.available_width()),
+                );
+                ui.add_space(8.0);
+                if ui
+                    .add_enabled(
+                        !orders.is_empty(),
+                        primary_button("Exporter les commandes", [ui.available_width(), 50.0]),
+                    )
+                    .clicked()
+                {
+                    self.export(date, &orders);
+                }
+                if orders.is_empty() {
+                    ui.small("Aucune commande terminée aujourd’hui.");
+                }
+            });
+        });
+        ui.add_space(14.0);
         ui.label(egui::RichText::new("ARTICLES PRINCIPAUX PAR CATÉGORIE").strong());
         egui::ScrollArea::vertical()
-            .max_height(240.0)
+            .max_height(ui.available_height().max(240.0))
             .show(ui, |ui| {
-                for (cat, count) in &counts {
+                for (category, count) in &ordered_counts {
                     let color = self
                         .categories
                         .iter()
-                        .position(|x| x == cat)
+                        .position(|name| name.eq_ignore_ascii_case(category))
                         .and_then(|i| self.colors.get(i).copied())
                         .unwrap_or_else(default_theme);
+                    let expanded = self.expanded_categories.contains(category);
+                    let mut clicked = false;
                     egui::Frame::new()
                         .fill(egui::Color32::from_rgb(color[0], color[1], color[2]))
                         .corner_radius(egui::CornerRadius::same(12))
-                        .inner_margin(egui::Margin::symmetric(16, 12))
+                        .inner_margin(egui::Margin::symmetric(12, 5))
                         .show(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                ui.label(egui::RichText::new(cat).strong());
-                                ui.with_layout(
-                                    egui::Layout::right_to_left(egui::Align::Center),
-                                    |ui| ui.label(egui::RichText::new(count.to_string()).strong()),
-                                );
-                            });
+                            let label = if expanded {
+                                format!("⌄  {category}")
+                            } else {
+                                format!("›  {category}")
+                            };
+                            let width = ui.available_width();
+                            let response = ui.add(
+                                egui::Button::new(egui::RichText::new(label).size(18.0).strong())
+                                    .fill(egui::Color32::TRANSPARENT)
+                                    .stroke(egui::Stroke::NONE)
+                                    .min_size([width, 48.0].into()),
+                            );
+                            let count_rect = egui::Rect::from_min_size(
+                                egui::pos2(response.rect.right() - 70.0, response.rect.top()),
+                                egui::vec2(58.0, response.rect.height()),
+                            );
+                            ui.painter().text(
+                                count_rect.center(),
+                                egui::Align2::CENTER_CENTER,
+                                count.to_string(),
+                                egui::FontId::proportional(20.0),
+                                ui.visuals().text_color(),
+                            );
+                            clicked = response.clicked();
                         });
+                    if clicked {
+                        if expanded {
+                            self.expanded_categories.remove(category);
+                        } else {
+                            self.expanded_categories.insert(category.clone());
+                        }
+                    }
+                    if self.expanded_categories.contains(category) {
+                        let details =
+                            main_products_in_category(&orders, category, &self.categories);
+                        card().show(ui, |ui| {
+                            if details.is_empty() {
+                                ui.label("Aucun article principal vendu dans cette catégorie.");
+                            } else {
+                                egui::Grid::new(("bilan_categorie", category))
+                                    .num_columns(3)
+                                    .spacing([20.0, 8.0])
+                                    .striped(true)
+                                    .show(ui, |ui| {
+                                        ui.label(egui::RichText::new("Produit").strong());
+                                        ui.label(egui::RichText::new("Quantité").strong());
+                                        ui.label(egui::RichText::new("Sous-total").strong());
+                                        ui.end_row();
+                                        for (name, (quantity, subtotal)) in &details {
+                                            ui.label(name);
+                                            ui.label(quantity.to_string());
+                                            ui.label(money(*subtotal));
+                                            ui.end_row();
+                                        }
+                                    });
+                            }
+                        });
+                    }
                     ui.add_space(6.0);
                 }
             });
-        ui.add_space(20.0);
-        ui.separator();
-        ui.label(egui::RichText::new("EXPORT DE FIN DE JOURNÉE").strong());
-        ui.heading("Enregistrer le détail des commandes sur USB");
-        ui.label("Saisissez le chemin du dossier USB monté. Un fichier JSON daté contiendra le détail des commandes et des articles.");
-        ui.horizontal(|ui| {
-            ui.add(
-                egui::TextEdit::singleline(&mut self.export_directory)
-                    .hint_text("Dossier USB, ex. /media/vous/USB")
-                    .desired_width(520.0),
-            );
-            if ui
-                .add_enabled(
-                    !orders.is_empty(),
-                    primary_button("Exporter les commandes", [250.0, 48.0]),
-                )
-                .clicked()
-            {
-                self.export(date, &orders);
-            }
-        });
-        if orders.is_empty() {
-            ui.label("Aucune commande terminée aujourd’hui.");
-        }
-        if let Some(m) = &self.message {
-            ui.label(m);
+        if let Some(message) = &self.message {
+            ui.label(message);
         }
     }
     fn export(&mut self, date: chrono::NaiveDate, orders: &[Receipt]) {
@@ -1045,6 +1180,59 @@ fn main_item_counts(orders: &[Receipt], categories: &[String]) -> BTreeMap<Strin
     counts
 }
 
+fn ordered_category_counts(
+    counts: &BTreeMap<String, u64>,
+    categories: &[String],
+) -> Vec<(String, u64)> {
+    let mut ordered = Vec::new();
+    for category in categories {
+        if let Some((name, count)) = counts
+            .iter()
+            .find(|(name, _)| name.eq_ignore_ascii_case(category.trim()))
+        {
+            if !ordered
+                .iter()
+                .any(|(known, _): &(String, u64)| known.eq_ignore_ascii_case(name))
+            {
+                ordered.push((name.clone(), *count));
+            }
+        }
+    }
+    for (name, count) in counts {
+        if !ordered
+            .iter()
+            .any(|(known, _)| known.eq_ignore_ascii_case(name))
+        {
+            ordered.push((name.clone(), *count));
+        }
+    }
+    ordered
+}
+
+fn main_products_in_category(
+    orders: &[Receipt],
+    selected_category: &str,
+    categories: &[String],
+) -> BTreeMap<String, (u64, u64)> {
+    let mut details = BTreeMap::new();
+    for item in orders.iter().flat_map(|order| &order.items) {
+        let recorded = if item.category.trim().is_empty() {
+            "Non catégorisé"
+        } else {
+            item.category.trim()
+        };
+        if canonical_category(recorded, categories) != selected_category {
+            continue;
+        }
+        let row = details.entry(item.name.clone()).or_insert((0_u64, 0_u64));
+        row.0 = row.0.saturating_add(u64::from(item.quantity));
+        row.1 = row
+            .1
+            .saturating_add(item.price.saturating_mul(u64::from(item.quantity)));
+    }
+    details
+}
+
 fn canonical_category(recorded: &str, categories: &[String]) -> String {
     if let Some(exact) = categories
         .iter()
@@ -1147,6 +1335,13 @@ fn page_heading(ui: &mut egui::Ui, eyebrow: &str, title: &str, subtitle: &str) {
 fn header_button(s: &str) -> egui::Button<'_> {
     egui::Button::new(egui::RichText::new(s).strong().color(egui::Color32::WHITE))
         .fill(egui::Color32::from_rgb(57, 99, 72))
+        .stroke(egui::Stroke::NONE)
+        .corner_radius(egui::CornerRadius::same(10))
+        .min_size([150.0, 44.0].into())
+}
+fn danger_button(s: &str) -> egui::Button<'_> {
+    egui::Button::new(egui::RichText::new(s).strong().color(egui::Color32::WHITE))
+        .fill(egui::Color32::from_rgb(176, 54, 48))
         .stroke(egui::Stroke::NONE)
         .corner_radius(egui::CornerRadius::same(10))
         .min_size([150.0, 44.0].into())
