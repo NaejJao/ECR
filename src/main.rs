@@ -98,6 +98,7 @@ struct App {
     edit_topping: bool,
     export_directory: String,
     expanded_categories: BTreeSet<String>,
+    show_previous_order: bool,
     message: Option<String>,
 }
 #[derive(PartialEq, Eq)]
@@ -174,6 +175,7 @@ impl Default for App {
             edit_topping: false,
             export_directory: String::new(),
             expanded_categories: BTreeSet::new(),
+            show_previous_order: false,
             message: None,
         };
         if !app.menu_path.exists() {
@@ -249,6 +251,7 @@ impl eframe::App for App {
                             };
                             self.message = None;
                         }
+
                         if self.screen == Screen::Order
                             && ui.add(header_button("Bilan du jour")).clicked()
                         {
@@ -273,6 +276,9 @@ impl eframe::App for App {
                     .show(ctx, |ui| self.daily_ui(ui));
             }
             Screen::Order => self.order_ui(ctx),
+        }
+        if self.show_previous_order {
+            self.previous_order_window(ctx);
         }
     }
 }
@@ -380,7 +386,17 @@ impl App {
     }
 
     fn order_panel(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Commande");
+        ui.horizontal(|ui| {
+            ui.heading("Commande");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .add_enabled(!self.receipts.is_empty(), header_button("Précédente"))
+                    .clicked()
+                {
+                    self.show_previous_order = true;
+                }
+            });
+        });
         ui.separator();
         if let Some(message) = &self.message {
             ui.label(message);
@@ -541,6 +557,88 @@ impl App {
         });
     }
 
+    fn previous_order_window(&mut self, ctx: &egui::Context) {
+        let Some(receipt) = self.receipts.last().cloned() else {
+            self.show_previous_order = false;
+            return;
+        };
+        egui::Window::new("Dernière commande validée")
+            .open(&mut self.show_previous_order)
+            .resizable(true)
+            .collapsible(false)
+            .default_size([620.0, 560.0])
+            .show(ctx, |ui| {
+                if let Some(completed_at) = Local.timestamp_opt(receipt.completed_at, 0).single() {
+                    ui.label(completed_at.format("%d/%m/%Y à %H:%M").to_string());
+                }
+                ui.add_space(8.0);
+                egui::ScrollArea::vertical()
+                    .max_height((ui.available_height() - 80.0).max(160.0))
+                    .show(ui, |ui| {
+                        for item in &receipt.items {
+                            let color = egui::Color32::from_rgb(
+                                item.theme[0],
+                                item.theme[1],
+                                item.theme[2],
+                            );
+                            egui::Frame::new()
+                                .fill(color)
+                                .corner_radius(egui::CornerRadius::same(10))
+                                .inner_margin(egui::Margin::symmetric(12, 8))
+                                .show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        let name = if item.quantity > 1 {
+                                            format!("{} × {}", item.quantity, item.name)
+                                        } else {
+                                            item.name.clone()
+                                        };
+                                        ui.label(egui::RichText::new(name).strong());
+                                        ui.with_layout(
+                                            egui::Layout::right_to_left(egui::Align::Center),
+                                            |ui| {
+                                                ui.label(money(
+                                                    item.price
+                                                        .saturating_mul(u64::from(item.quantity)),
+                                                ));
+                                            },
+                                        );
+                                    });
+                                    for topping in &item.toppings {
+                                        let name = if topping.quantity > 1 {
+                                            format!("↳ {} × {}", topping.quantity, topping.name)
+                                        } else {
+                                            format!("↳ {}", topping.name)
+                                        };
+                                        ui.horizontal(|ui| {
+                                            ui.label(name);
+                                            ui.with_layout(
+                                                egui::Layout::right_to_left(egui::Align::Center),
+                                                |ui| {
+                                                    ui.label(money(topping.price.saturating_mul(
+                                                        u64::from(topping.quantity),
+                                                    )));
+                                                },
+                                            );
+                                        });
+                                    }
+                                });
+                            ui.add_space(6.0);
+                        }
+                    });
+                ui.separator();
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("Total payé").size(20.0).strong());
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(
+                            egui::RichText::new(money(receipt.total))
+                                .size(28.0)
+                                .strong(),
+                        );
+                    });
+                });
+            });
+    }
+
     fn add_product(&mut self, name: &str, price: u64, topping: bool, category: usize) {
         let item = Item {
             name: name.into(),
@@ -552,26 +650,15 @@ impl App {
             toppings: Vec::new(),
         };
         if topping {
-            if let Some(parent) = self
-                .order
-                .iter_mut()
-                .rev()
-                .find(|x| x.category_index == category)
-            {
-                if let Some(existing) = parent
-                    .toppings
-                    .iter_mut()
-                    .find(|x| x.name == item.name && x.price == item.price)
-                {
-                    existing.quantity = existing.quantity.saturating_add(1);
-                } else {
-                    parent.toppings.push(item);
+            match attach_topping(&mut self.order, item, category) {
+                Some(true) => self.message = None,
+                Some(false) => {}
+                None => {
+                    self.message = Some(format!(
+                        "Ajoutez d’abord un produit principal de la catégorie {} avant sa garniture.",
+                        self.categories[category]
+                    ));
                 }
-            } else {
-                self.message = Some(format!(
-                    "Ajoutez d’abord un produit principal de la catégorie {} avant sa garniture.",
-                    self.categories[category]
-                ));
             }
         } else {
             let category_has_toppings = self
@@ -1103,6 +1190,22 @@ impl App {
     }
 }
 
+fn attach_topping(order: &mut [Item], topping: Item, category: usize) -> Option<bool> {
+    let parent = order
+        .iter_mut()
+        .rev()
+        .find(|item| item.category_index == category)?;
+    if parent
+        .toppings
+        .iter()
+        .any(|existing| existing.name == topping.name)
+    {
+        return Some(false);
+    }
+    parent.toppings.push(topping);
+    Some(true)
+}
+
 impl Item {
     fn total(&self) -> u64 {
         self.toppings.iter().fold(
@@ -1142,7 +1245,7 @@ fn parse_price(s: &str) -> Option<u64> {
     whole.checked_mul(100)?.checked_add(c).filter(|x| *x > 0)
 }
 fn money(c: u64) -> String {
-    format!("{},{:02}", c / 100, c % 100)
+    format!("{},{:02} €", c / 100, c % 100)
 }
 fn data_path(file: &str) -> Result<PathBuf, String> {
     #[cfg(target_os = "windows")]
@@ -1401,6 +1504,36 @@ mod tests {
             canonical_category("Dessert", &["Desert".into(), "Desserts".into()]),
             "Dessert"
         );
+    }
+
+    #[test]
+    fn repeated_identical_topping_is_ignored_on_the_same_base_product() {
+        let mut order = vec![Item {
+            name: "Gaufre".into(),
+            price: 500,
+            quantity: 1,
+            category: "Gaufres".into(),
+            category_index: 0,
+            theme: theme(0),
+            toppings: Vec::new(),
+        }];
+        for _ in 0..2 {
+            attach_topping(
+                &mut order,
+                Item {
+                    name: "Nutella".into(),
+                    price: 100,
+                    quantity: 1,
+                    category: "Gaufres".into(),
+                    category_index: 0,
+                    theme: theme(0),
+                    toppings: Vec::new(),
+                },
+                0,
+            );
+        }
+        assert_eq!(order[0].toppings.len(), 1);
+        assert_eq!(order[0].total(), 600);
     }
 
     #[test]
