@@ -27,10 +27,10 @@ pub(crate) fn attach_topping(order: &mut [Item], topping: Item, category: usize)
     Some(true)
 }
 
-/// Parses a positive price entered with either a decimal comma or decimal point.
+/// Parses a non-negative price entered with either a decimal comma or decimal point.
 ///
 /// Returns the value in centimes. Inputs with more than two fractional digits,
-/// both decimal separators, negative values, or zero are rejected.
+/// both decimal separators, or negative values are rejected; zero is allowed for free items.
 pub(crate) fn parse_price(s: &str) -> Option<u64> {
     let s = s.trim();
     if s.is_empty() || s.starts_with('-') || (s.contains(',') && s.contains('.')) {
@@ -49,7 +49,7 @@ pub(crate) fn parse_price(s: &str) -> Option<u64> {
         2 => frac.parse::<u64>().ok()?,
         _ => return None,
     };
-    whole.checked_mul(100)?.checked_add(c).filter(|x| *x > 0)
+    whole.checked_mul(100)?.checked_add(c)
 }
 
 /// Formats an amount stored in centimes using French decimal and currency notation.

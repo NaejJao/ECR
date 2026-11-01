@@ -2,6 +2,13 @@
 
 use crate::{domain::*, model::*};
 #[test]
+fn zero_price_is_valid_but_negative_price_is_rejected() {
+    assert_eq!(parse_price("0"), Some(0));
+    assert_eq!(parse_price("0,00"), Some(0));
+    assert_eq!(parse_price("-0,50"), None);
+}
+
+#[test]
 fn previous_menu_json_schema_still_loads_products_and_categories() {
     let json = r#"{
             "categories": ["Waffles"],

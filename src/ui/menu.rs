@@ -166,7 +166,7 @@ impl App {
                             self.save_menu();
                         } else {
                             self.message =
-                                Some("Saisissez un prix valide supérieur à zéro.".into());
+                                Some("Saisissez un prix valide (0 accepté pour un produit offert).".into());
                         }
                     }
                 });
@@ -233,7 +233,7 @@ impl App {
                                                 self.save_menu();
                                             } else {
                                                 self.message =
-                                                    Some("Saisissez un prix valide.".into());
+                                                    Some("Saisissez un prix valide (0 accepté pour un produit offert).".into());
                                             }
                                         }
                                         if ui.button("Annuler").clicked() {
