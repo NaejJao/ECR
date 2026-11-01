@@ -1,13 +1,34 @@
-//! Touch-first product selection, current-order editing, and previous-order viewing.
+//! Touch-first product selection, image-backed product buttons, and order history.
 //!
-//! Completed receipts are shown in a separate read-only window; only the open order
-//! exposes remove controls.
+//! Completed receipts are read-only; product images are fitted into a fixed one-third-width
+//! button panel without changing the label and price area.
 
 use crate::{app::App, domain::*, ui::widgets::*};
 use chrono::{Local, TimeZone};
 use eframe::egui;
 
 impl App {
+    /// Loads and caches a product image texture, remembering missing or invalid files too.
+    fn product_texture(&mut self, ctx: &egui::Context, path: &str) -> Option<egui::TextureHandle> {
+        if !self.product_images.contains_key(path) {
+            let texture = image::open(path).ok().map(|decoded| {
+                let rgba = decoded.into_rgba8();
+                let size = [rgba.width() as usize, rgba.height() as usize];
+                let corner = rgba.get_pixel(0, 0).0;
+                self.product_image_corners.insert(
+                    path.to_owned(),
+                    egui::Color32::from_rgba_unmultiplied(
+                        corner[0], corner[1], corner[2], corner[3],
+                    ),
+                );
+                let color_image = egui::ColorImage::from_rgba_unmultiplied(size, rgba.as_raw());
+                ctx.load_texture(path, color_image, egui::TextureOptions::LINEAR)
+            });
+            self.product_images.insert(path.to_owned(), texture);
+        }
+        self.product_images.get(path).cloned().flatten()
+    }
+
     /// Builds the responsive product grid and resizable current-order side panel.
     pub(crate) fn order_ui(&mut self, ctx: &egui::Context) {
         let screen_width = ctx.screen_rect().width();
@@ -61,7 +82,15 @@ impl App {
                     .products
                     .iter()
                     .filter(|p| p.category == self.selected)
-                    .map(|p| (p.name.clone(), p.price, p.topping, p.category))
+                    .map(|p| {
+                        (
+                            p.name.clone(),
+                            p.price,
+                            p.topping,
+                            p.category,
+                            p.image_path.clone(),
+                        )
+                    })
                     .collect();
                 let available_width = ui.available_width().max(240.0);
                 let cols = (available_width / 220.0).round() as usize;
@@ -74,38 +103,126 @@ impl App {
                         "Aucun produit dans cette catégorie. Ajoutez-en dans « Gérer le menu ».",
                     );
                 } else {
-                    egui::Grid::new("product_buttons")
-                        .num_columns(cols)
-                        .spacing([12.0, 12.0])
-                        .show(ui, |ui| {
-                            for (n, (name, price, topping, category)) in items.iter().enumerate() {
-                                let theme = self.colors[*category];
-                                let fill = if *topping {
-                                    lighten(theme)
-                                } else {
-                                    egui::Color32::from_rgb(theme[0], theme[1], theme[2])
-                                };
-                                let mut label = egui::text::LayoutJob::default();
-                                let mut name_style = egui::TextFormat::default();
-                                name_style.font_id = egui::FontId::proportional(24.0);
-                                name_style.color = egui::Color32::from_rgb(35, 73, 53);
-                                label.append(name, 0.0, name_style);
-                                label.append("\n", 0.0, egui::TextFormat::default());
-                                let mut price_style = egui::TextFormat::default();
-                                price_style.font_id = egui::FontId::proportional(15.0);
-                                price_style.color = egui::Color32::from_rgb(70, 82, 72);
-                                label.append(&money(*price), 0.0, price_style);
-                                let button = egui::Button::new(label)
-                                    .fill(fill)
-                                    .min_size([button_width, 124.0].into());
-                                if ui.add(button).clicked() {
-                                    self.add_product(name, *price, *topping, *category);
-                                }
-                                if (n + 1) % cols == 0 {
-                                    ui.end_row();
-                                }
+                    ui.horizontal_wrapped(|ui| {
+                        for (name, price, topping, category, image_path) in &items {
+                            let theme = self.colors[*category];
+                            let fill = if *topping {
+                                lighten(theme)
+                            } else {
+                                egui::Color32::from_rgb(theme[0], theme[1], theme[2])
+                            };
+                            let image = image_path.as_deref().and_then(|path| {
+                                self.product_texture(ctx, path)
+                                    .map(|texture| (texture, path))
+                            });
+                            let (button_rect, response) = ui.allocate_exact_size(
+                                egui::vec2(button_width, 124.0),
+                                egui::Sense::click(),
+                            );
+                            let button_fill = if response.is_pointer_button_down_on() {
+                                ui.visuals().widgets.active.bg_fill
+                            } else if response.hovered() {
+                                ui.visuals().widgets.hovered.bg_fill
+                            } else {
+                                fill
+                            };
+                            ui.painter().rect_filled(
+                                button_rect,
+                                egui::CornerRadius::same(12),
+                                button_fill,
+                            );
+                            ui.painter().rect_stroke(
+                                button_rect,
+                                egui::CornerRadius::same(12),
+                                ui.visuals().widgets.inactive.bg_stroke,
+                                egui::StrokeKind::Inside,
+                            );
+                            let image_width = button_rect.width() * 0.33;
+                            if let Some((image, path)) = image {
+                                let image_panel = egui::Rect::from_min_max(
+                                    button_rect.min,
+                                    egui::pos2(
+                                        button_rect.left() + image_width,
+                                        button_rect.bottom(),
+                                    ),
+                                );
+                                let corner_color = self
+                                    .product_image_corners
+                                    .get(path)
+                                    .copied()
+                                    .unwrap_or(button_fill);
+                                ui.painter().rect_filled(
+                                    image_panel,
+                                    egui::CornerRadius::same(12),
+                                    button_fill,
+                                );
+                                let image_inset = image_panel.shrink(3.0);
+                                ui.painter().rect_filled(
+                                    image_inset,
+                                    egui::CornerRadius::same(9),
+                                    corner_color,
+                                );
+                                let source = image.size_vec2();
+                                let available = image_inset.shrink(4.0);
+                                let scale = (available.width() / source.x)
+                                    .min(available.height() / source.y);
+                                let image_size = source * scale;
+                                let image_rect =
+                                    egui::Rect::from_center_size(image_panel.center(), image_size);
+                                ui.painter().image(
+                                    image.id(),
+                                    image_rect,
+                                    egui::Rect::from_min_max(
+                                        egui::pos2(0.0, 0.0),
+                                        egui::pos2(1.0, 1.0),
+                                    ),
+                                    egui::Color32::WHITE,
+                                );
                             }
-                        });
+                            let label_rect = egui::Rect::from_min_max(
+                                egui::pos2(
+                                    button_rect.left() + image_width + 4.0,
+                                    button_rect.top() + 4.0,
+                                ),
+                                button_rect.max - egui::vec2(4.0, 4.0),
+                            );
+                            let name_color = egui::Color32::from_rgb(35, 73, 53);
+                            let price_color = egui::Color32::from_rgb(70, 82, 72);
+                            let name_galley = ui.painter().layout(
+                                name.clone(),
+                                egui::FontId::proportional(22.0),
+                                name_color,
+                                label_rect.width(),
+                            );
+                            let price_galley = ui.painter().layout_no_wrap(
+                                money(*price),
+                                egui::FontId::proportional(15.0),
+                                price_color,
+                            );
+                            let content_height = name_galley.size().y + 4.0 + price_galley.size().y;
+                            let content_top = label_rect.center().y - content_height * 0.5;
+                            let painter = ui.painter().with_clip_rect(label_rect);
+                            painter.galley(
+                                egui::pos2(
+                                    label_rect.center().x - name_galley.size().x * 0.5,
+                                    content_top,
+                                ),
+                                name_galley.clone(),
+                                name_color,
+                            );
+                            painter.galley(
+                                egui::pos2(
+                                    label_rect.center().x - price_galley.size().x * 0.5,
+                                    content_top + name_galley.size().y + 4.0,
+                                ),
+                                price_galley,
+                                price_color,
+                            );
+                            if response.clicked() {
+                                self.add_product(name, *price, *topping, *category);
+                            }
+                        }
+                    });
                 }
             });
     }

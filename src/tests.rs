@@ -22,6 +22,7 @@ fn previous_menu_json_schema_still_loads_products_and_categories() {
     assert_eq!(menu.categories, ["Waffles"]);
     assert_eq!(menu.products.len(), 2);
     assert_eq!(menu.products[0].price, 350);
+    assert_eq!(menu.products[0].image_path, None);
     assert!(menu.products[1].topping);
     assert_eq!(menu.colors, [[210, 232, 211]]);
 }

@@ -8,7 +8,13 @@ use crate::{
     model::{Export, History, Item, MenuData, Product, Receipt},
 };
 use chrono::Local;
-use std::{collections::BTreeSet, fs, fs::OpenOptions, io::Write, path::PathBuf};
+use std::{
+    collections::{BTreeSet, HashMap},
+    fs,
+    fs::OpenOptions,
+    io::Write,
+    path::PathBuf,
+};
 
 /// Mutable runtime state shared by the cashier screens.
 ///
@@ -25,6 +31,10 @@ pub(crate) struct App {
     pub(crate) colors: Vec<[u8; 3]>,
     /// Products configured for sale.
     pub(crate) products: Vec<Product>,
+    /// Decoded product images cached for the current application session.
+    pub(crate) product_images: HashMap<String, Option<eframe::egui::TextureHandle>>,
+    /// Upper-left source pixel used as the background of each product-image panel.
+    pub(crate) product_image_corners: HashMap<String, eframe::egui::Color32>,
     /// Indicates that the menu file was present but could not be safely loaded.
     pub(crate) menu_bad: bool,
     /// Completed orders, in chronological insertion order.
@@ -43,6 +53,8 @@ pub(crate) struct App {
     pub(crate) new_name: String,
     /// Product price text currently being entered.
     pub(crate) new_price: String,
+    /// Optional image path currently being entered for the new product.
+    pub(crate) new_image_path: String,
     /// Category selected for the new product and product list filter.
     pub(crate) new_category_index: usize,
     /// Whether the new product is a topping.
@@ -53,6 +65,8 @@ pub(crate) struct App {
     pub(crate) edit_name: String,
     /// Edited product price text.
     pub(crate) edit_price: String,
+    /// Optional image path for the product being edited.
+    pub(crate) edit_image_path: String,
     /// Edited product category index.
     pub(crate) edit_category: usize,
     /// Whether the edited product is a topping.
@@ -136,6 +150,8 @@ impl Default for App {
             categories,
             colors,
             products,
+            product_images: HashMap::new(),
+            product_image_corners: HashMap::new(),
             menu_bad,
             receipts,
             history_bad,
@@ -145,11 +161,13 @@ impl Default for App {
             new_category: String::new(),
             new_name: String::new(),
             new_price: String::new(),
+            new_image_path: String::new(),
             new_category_index: 0,
             new_topping: false,
             edit_product: None,
             edit_name: String::new(),
             edit_price: String::new(),
+            edit_image_path: String::new(),
             edit_category: 0,
             edit_topping: false,
             export_directory: String::new(),
@@ -178,6 +196,26 @@ impl Default for App {
 }
 
 impl App {
+    /// Moves a product one position within its category and persists the new menu order.
+    pub(crate) fn move_product(&mut self, index: usize, move_up: bool) {
+        let Some(product) = self.products.get(index) else {
+            return;
+        };
+        let category = product.category;
+        let target = if move_up {
+            (0..index)
+                .rev()
+                .find(|&candidate| self.products[candidate].category == category)
+        } else {
+            (index + 1..self.products.len())
+                .find(|&candidate| self.products[candidate].category == category)
+        };
+        if let Some(target) = target {
+            self.products.swap(index, target);
+            self.save_menu();
+        }
+    }
+
     /// Adds a product to the open order or attaches a topping to its matching base item.
     ///
     /// Products from categories without toppings are combined into quantity lines.
@@ -298,6 +336,7 @@ impl App {
                         price: p.price,
                         category: p.category,
                         topping: p.topping,
+                        image_path: p.image_path.clone(),
                     })
                     .collect(),
             };

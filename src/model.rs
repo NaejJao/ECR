@@ -19,6 +19,9 @@ pub(crate) struct Product {
     /// Whether this product is an add-on attached to a base product.
     #[serde(default, alias = "is_topping")]
     pub(crate) topping: bool,
+    /// Optional filesystem path to the product button image.
+    #[serde(default)]
+    pub(crate) image_path: Option<String>,
 }
 
 /// A product line recorded in an open or completed order.

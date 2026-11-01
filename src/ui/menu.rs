@@ -1,9 +1,16 @@
-//! Menu configuration screen for categories, category colors, products, and toppings.
+//! Menu configuration for categories, products, toppings, product images, and display order.
 //!
-//! Product rows are filtered by the selected category and live in their own scroll area.
+//! Product rows are filtered by category, reordered with adjacent moves, and kept in a scroll area.
+//! Product images can be chosen through the operating system's native file picker.
 
 use crate::{app::App, domain::*, model::Product, ui::widgets::*};
 use eframe::egui;
+
+/// Converts an optional image path from an editor field into its persisted value.
+fn non_empty_path(path: &str) -> Option<String> {
+    let path = path.trim();
+    (!path.is_empty()).then(|| path.to_owned())
+}
 
 impl App {
     /// Renders category editing and category-filtered product management.
@@ -138,6 +145,20 @@ impl App {
                                 .desired_width(100.0),
                         );
                     });
+                    ui.horizontal(|ui| {
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.new_image_path)
+                                .hint_text("Chemin de l’image (PNG/JPEG, facultatif)"),
+                        );
+                        if ui.button("Choisir…").clicked() {
+                            if let Some(path) = rfd::FileDialog::new()
+                                .add_filter("Images", &["png", "jpg", "jpeg"])
+                                .pick_file()
+                            {
+                                self.new_image_path = path.display().to_string();
+                            }
+                        }
+                    });
 
                     ui.checkbox(&mut self.new_topping, "C’est une garniture");
                     if ui
@@ -159,9 +180,11 @@ impl App {
                                 price,
                                 category: self.new_category_index,
                                 topping: self.new_topping,
+                                image_path: non_empty_path(&self.new_image_path),
                             });
                             self.new_name.clear();
                             self.new_price.clear();
+                            self.new_image_path.clear();
                             self.new_topping = false;
                             self.save_menu();
                         } else {
@@ -171,6 +194,7 @@ impl App {
                     }
                 });
                 let mut delete_product = None;
+                let mut reorder_product = None;
                 let products_list_height = cols[1].available_height().max(180.0);
                 egui::ScrollArea::vertical()
                     .id_salt("menu_products_list")
@@ -190,6 +214,20 @@ impl App {
                                                 .desired_width(90.0),
                                         );
                                         ui.checkbox(&mut self.edit_topping, "Garniture");
+                                    });
+                                    ui.horizontal(|ui| {
+                                        ui.add(
+                                            egui::TextEdit::singleline(&mut self.edit_image_path)
+                                                .hint_text("Chemin de l’image (PNG/JPEG, facultatif)"),
+                                        );
+                                        if ui.button("Choisir…").clicked() {
+                                            if let Some(path) = rfd::FileDialog::new()
+                                                .add_filter("Images", &["png", "jpg", "jpeg"])
+                                                .pick_file()
+                                            {
+                                                self.edit_image_path = path.display().to_string();
+                                            }
+                                        }
                                     });
                                     egui::ComboBox::from_id_salt(("editcat", i))
                                         .selected_text(&self.categories[self.edit_category])
@@ -228,6 +266,7 @@ impl App {
                                                     price,
                                                     category: self.edit_category,
                                                     topping: self.edit_topping,
+                                                    image_path: non_empty_path(&self.edit_image_path),
                                                 };
                                                 self.edit_product = None;
                                                 self.save_menu();
@@ -251,6 +290,13 @@ impl App {
                                     .show(ui, |ui| {
                                         ui.horizontal(|ui| {
                                             let p = &self.products[i];
+                                            let category = p.category;
+                                            let can_move_up = self.products[..i]
+                                                .iter()
+                                                .any(|product| product.category == category);
+                                            let can_move_down = self.products[i + 1..]
+                                                .iter()
+                                                .any(|product| product.category == category);
                                             let cat = self
                                                 .categories
                                                 .get(p.category)
@@ -263,6 +309,14 @@ impl App {
                                                 cat,
                                                 if p.topping { " · Garniture" } else { "" }
                                             ));
+                                            if reorder_arrow_button(ui, true, can_move_up).clicked()
+                                            {
+                                                reorder_product = Some((i, true));
+                                            }
+                                            if reorder_arrow_button(ui, false, can_move_down).clicked()
+                                            {
+                                                reorder_product = Some((i, false));
+                                            }
                                             if ui.button("Modifier").clicked() {
                                                 self.edit_name = p.name.clone();
                                                 self.edit_price = format!(
@@ -272,6 +326,8 @@ impl App {
                                                 );
                                                 self.edit_category = p.category;
                                                 self.edit_topping = p.topping;
+                                                self.edit_image_path =
+                                                    p.image_path.clone().unwrap_or_default();
                                                 self.edit_product = Some(i);
                                             }
                                             if ui.button("Supprimer").clicked() {
@@ -286,6 +342,8 @@ impl App {
                     self.products.remove(i);
                     self.edit_product = None;
                     self.save_menu();
+                } else if let Some((i, move_up)) = reorder_product {
+                    self.move_product(i, move_up);
                 }
             }
         });

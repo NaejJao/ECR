@@ -51,6 +51,58 @@ pub(crate) fn header_button(s: &str) -> egui::Button<'_> {
         .min_size([150.0, 44.0].into())
 }
 
+/// Builds a fixed-size reorder control with a vector-drawn arrow and disabled state.
+pub(crate) fn reorder_arrow_button(
+    ui: &mut egui::Ui,
+    points_up: bool,
+    enabled: bool,
+) -> egui::Response {
+    ui.add_enabled_ui(enabled, |ui| {
+        let (rect, response) = ui.allocate_exact_size([40.0, 40.0].into(), egui::Sense::click());
+        let visuals = ui.style().interact(&response);
+        ui.painter()
+            .rect_filled(rect, egui::CornerRadius::same(8), visuals.bg_fill);
+        ui.painter().rect_stroke(
+            rect,
+            egui::CornerRadius::same(8),
+            visuals.bg_stroke,
+            egui::StrokeKind::Inside,
+        );
+
+        let center = rect.center();
+        let stroke = egui::Stroke::new(2.5_f32, visuals.fg_stroke.color);
+        let (tip_y, tail_y) = if points_up {
+            (center.y - 7.0, center.y + 7.0)
+        } else {
+            (center.y + 7.0, center.y - 7.0)
+        };
+        ui.painter().line_segment(
+            [egui::pos2(center.x, tail_y), egui::pos2(center.x, tip_y)],
+            stroke,
+        );
+        ui.painter().line_segment(
+            [
+                egui::pos2(center.x - 6.0, tip_y + if points_up { 6.0 } else { -6.0 }),
+                egui::pos2(center.x, tip_y),
+            ],
+            stroke,
+        );
+        ui.painter().line_segment(
+            [
+                egui::pos2(center.x + 6.0, tip_y + if points_up { 6.0 } else { -6.0 }),
+                egui::pos2(center.x, tip_y),
+            ],
+            stroke,
+        );
+        response.on_hover_text(if points_up {
+            "Monter le produit"
+        } else {
+            "Descendre le produit"
+        })
+    })
+    .inner
+}
+
 /// Builds the green primary action button with a caller-selected minimum size.
 pub(crate) fn primary_button(s: &str, size: [f32; 2]) -> egui::Button<'_> {
     egui::Button::new(egui::RichText::new(s).strong().color(egui::Color32::WHITE))
