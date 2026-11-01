@@ -193,7 +193,7 @@ impl eframe::App for App {
                         }
 
                         if self.screen == Screen::Order
-                            && ui.add(header_button("Bilan du jour")).pressed(ui)
+                            && ui.add(header_button("Bilan")).pressed(ui)
                         {
                             self.screen = Screen::Daily;
                             self.message = None;

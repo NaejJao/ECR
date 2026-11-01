@@ -1,6 +1,7 @@
 //! Regression tests for menu compatibility, category reporting, and topping rules.
 
 use crate::{domain::*, model::*};
+/// Confirms complimentary products remain valid while negative prices are rejected.
 #[test]
 fn zero_price_is_valid_but_negative_price_is_rejected() {
     assert_eq!(parse_price("0"), Some(0));
@@ -8,6 +9,7 @@ fn zero_price_is_valid_but_negative_price_is_rejected() {
     assert_eq!(parse_price("-0,50"), None);
 }
 
+/// Ensures legacy menu fields load and absent optional image paths default safely.
 #[test]
 fn previous_menu_json_schema_still_loads_products_and_categories() {
     let json = r#"{
@@ -27,6 +29,7 @@ fn previous_menu_json_schema_still_loads_products_and_categories() {
     assert_eq!(menu.colors, [[210, 232, 211]]);
 }
 
+/// Verifies historical category spelling is reconciled only when the match is unambiguous.
 #[test]
 fn historical_category_typo_merges_only_when_there_is_one_close_match() {
     assert_eq!(
@@ -43,6 +46,7 @@ fn historical_category_typo_merges_only_when_there_is_one_close_match() {
     );
 }
 
+/// Ensures repeated taps cannot attach the same topping twice to one base item.
 #[test]
 fn repeated_identical_topping_is_ignored_on_the_same_base_product() {
     let mut order = vec![Item {
@@ -73,6 +77,7 @@ fn repeated_identical_topping_is_ignored_on_the_same_base_product() {
     assert_eq!(order[0].total(), 600);
 }
 
+/// Checks toppings affect revenue totals but not main-product category quantities.
 #[test]
 fn topping_total_is_included_but_daily_category_count_uses_main_items_only() {
     let receipt = Receipt {

@@ -10,6 +10,7 @@ mod ui;
 #[cfg(test)]
 mod tests;
 
+/// Starts the native Egui application and forwards any startup error.
 fn main() -> eframe::Result {
     app::run()
 }

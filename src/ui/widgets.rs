@@ -9,6 +9,7 @@ pub(crate) trait TouchResponseExt {
 }
 
 impl TouchResponseExt for egui::Response {
+    /// Checks the event position directly so activation occurs on the first press frame.
     fn pressed(&self, ui: &egui::Ui) -> bool {
         let pointer_pressed = ui.input(|input| {
             input.pointer.button_pressed(egui::PointerButton::Primary)
@@ -204,14 +205,14 @@ pub(crate) fn primary_button(s: &str, size: [f32; 2]) -> egui::Button<'_> {
         .min_size(size.into())
 }
 
-/// Displays a labeled, prominent metric in the daily overview.
+/// Displays a large, touch-readable labeled metric in the daily overview.
 pub(crate) fn overview_card(ui: &mut egui::Ui, label: &str, value: String) {
     card().inner_margin(egui::Margin::same(20)).show(ui, |ui| {
-        ui.set_min_width(240.0);
-        ui.label(label);
+        ui.set_min_width(260.0);
+        ui.label(egui::RichText::new(label).size(18.0));
         ui.label(
             egui::RichText::new(value)
-                .size(28.0)
+                .size(36.0)
                 .strong()
                 .color(egui::Color32::from_rgb(35, 73, 53)),
         );
