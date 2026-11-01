@@ -2,6 +2,29 @@
 
 use eframe::egui;
 
+/// Extends egui responses with activation on pointer or keyboard press.
+pub(crate) trait TouchResponseExt {
+    /// Returns true on the frame a primary pointer or activation key is pressed.
+    fn pressed(&self, ui: &egui::Ui) -> bool;
+}
+
+impl TouchResponseExt for egui::Response {
+    fn pressed(&self, ui: &egui::Ui) -> bool {
+        let pointer_pressed = ui.input(|input| {
+            input.pointer.button_pressed(egui::PointerButton::Primary)
+                && input
+                    .pointer
+                    .interact_pos()
+                    .is_some_and(|position| self.rect.contains(position))
+        });
+        let keyboard_pressed = self.has_focus()
+            && ui.input(|input| {
+                input.key_pressed(egui::Key::Enter) || input.key_pressed(egui::Key::Space)
+            });
+        pointer_pressed || keyboard_pressed
+    }
+}
+
 /// Blends a category color with white to distinguish topping buttons.
 pub(crate) fn lighten(c: [u8; 3]) -> egui::Color32 {
     egui::Color32::from_rgb(
@@ -49,6 +72,75 @@ pub(crate) fn header_button(s: &str) -> egui::Button<'_> {
         .stroke(egui::Stroke::NONE)
         .corner_radius(egui::CornerRadius::same(10))
         .min_size([150.0, 44.0].into())
+}
+
+/// Direction and shape of a compact, vector-drawn action icon.
+#[derive(Clone, Copy)]
+pub(crate) enum ActionIcon {
+    /// Arrow directed to the left.
+    Left,
+    /// Arrow directed to the right.
+    Right,
+    /// Cross used for remove actions.
+    Cross,
+}
+
+/// Builds a fixed-size icon button without relying on font glyph coverage.
+pub(crate) fn action_icon_button(
+    ui: &mut egui::Ui,
+    icon: ActionIcon,
+    enabled: bool,
+    size: [f32; 2],
+    tooltip: &'static str,
+) -> egui::Response {
+    ui.add_enabled_ui(enabled, |ui| {
+        let (rect, response) = ui.allocate_exact_size(size.into(), egui::Sense::click());
+        let visuals = ui.style().interact(&response);
+        ui.painter()
+            .rect_filled(rect, egui::CornerRadius::same(8), visuals.bg_fill);
+        ui.painter().rect_stroke(
+            rect,
+            egui::CornerRadius::same(8),
+            visuals.bg_stroke,
+            egui::StrokeKind::Inside,
+        );
+        let center = rect.center();
+        let stroke = egui::Stroke::new(2.5_f32, visuals.fg_stroke.color);
+        match icon {
+            ActionIcon::Left | ActionIcon::Right => {
+                let direction = if matches!(icon, ActionIcon::Left) {
+                    -1.0
+                } else {
+                    1.0
+                };
+                let tip = center + egui::vec2(direction * 7.0, 0.0);
+                ui.painter()
+                    .line_segment([center - egui::vec2(direction * 7.0, 0.0), tip], stroke);
+                ui.painter()
+                    .line_segment([tip + egui::vec2(-direction * 6.0, -6.0), tip], stroke);
+                ui.painter()
+                    .line_segment([tip + egui::vec2(-direction * 6.0, 6.0), tip], stroke);
+            }
+            ActionIcon::Cross => {
+                ui.painter().line_segment(
+                    [
+                        center + egui::vec2(-5.0, -5.0),
+                        center + egui::vec2(5.0, 5.0),
+                    ],
+                    stroke,
+                );
+                ui.painter().line_segment(
+                    [
+                        center + egui::vec2(5.0, -5.0),
+                        center + egui::vec2(-5.0, 5.0),
+                    ],
+                    stroke,
+                );
+            }
+        }
+        response.on_hover_text(tooltip)
+    })
+    .inner
 }
 
 /// Builds a fixed-size reorder control with a vector-drawn arrow and disabled state.

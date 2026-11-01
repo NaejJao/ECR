@@ -68,7 +68,7 @@ impl App {
                                 .fill(fill)
                                 .min_size([160.0, 58.0].into()),
                             )
-                            .clicked()
+                            .pressed(ui)
                         {
                             self.selected = i;
                         }
@@ -218,7 +218,7 @@ impl App {
                                 price_galley,
                                 price_color,
                             );
-                            if response.clicked() {
+                            if response.pressed(ui) {
                                 self.add_product(name, *price, *topping, *category);
                             }
                         }
@@ -234,7 +234,7 @@ impl App {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
                     .add_enabled(!self.receipts.is_empty(), header_button("Historique"))
-                    .clicked()
+                    .pressed(ui)
                 {
                     self.history_receipt_index = self.receipts.len().saturating_sub(1);
                     self.show_previous_order = true;
@@ -295,7 +295,7 @@ impl App {
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
                                 let item_name = if item.quantity > 1 {
-                                    format!("{} × {}", item.quantity, item.name)
+                                    format!("{} x {}", item.quantity, item.name)
                                 } else {
                                     item.name.clone()
                                 };
@@ -308,9 +308,14 @@ impl App {
                                 ui.with_layout(
                                     egui::Layout::right_to_left(egui::Align::Center),
                                     |ui| {
-                                        if ui
-                                            .add_sized([30.0, 28.0], egui::Button::new("×"))
-                                            .clicked()
+                                        if action_icon_button(
+                                            ui,
+                                            ActionIcon::Cross,
+                                            true,
+                                            [30.0, 28.0],
+                                            "Retirer l’article",
+                                        )
+                                        .pressed(ui)
                                         {
                                             remove = Some((i, None));
                                         }
@@ -328,17 +333,25 @@ impl App {
                                 for (j, topping) in item.toppings.iter().enumerate() {
                                     ui.horizontal(|ui| {
                                         let name = if topping.quantity > 1 {
-                                            format!("↳ {} × {}", topping.quantity, topping.name)
+                                            format!(
+                                                "Garniture : {} x {}",
+                                                topping.quantity, topping.name
+                                            )
                                         } else {
-                                            format!("↳ {}", topping.name)
+                                            format!("Garniture : {}", topping.name)
                                         };
                                         ui.label(egui::RichText::new(name).size(14.0));
                                         ui.with_layout(
                                             egui::Layout::right_to_left(egui::Align::Center),
                                             |ui| {
-                                                if ui
-                                                    .add_sized([32.0, 30.0], egui::Button::new("×"))
-                                                    .clicked()
+                                                if action_icon_button(
+                                                    ui,
+                                                    ActionIcon::Cross,
+                                                    true,
+                                                    [32.0, 30.0],
+                                                    "Retirer la garniture",
+                                                )
+                                                .pressed(ui)
                                                 {
                                                     remove = Some((i, Some(j)));
                                                 }
@@ -388,13 +401,13 @@ impl App {
                     !self.order.is_empty(),
                     primary_button("Valider la commande", [button_width, 58.0]),
                 )
-                .clicked()
+                .pressed(ui)
             {
                 self.complete();
             }
             if ui
                 .add_sized([ui.available_width(), 58.0], egui::Button::new("Effacer"))
-                .clicked()
+                .pressed(ui)
             {
                 self.order.clear();
             }
@@ -446,27 +459,34 @@ impl App {
                 );
                 let previous_clicked = ui
                     .allocate_new_ui(egui::UiBuilder::new().max_rect(previous_rect), |ui| {
-                        ui.add_enabled(self.history_receipt_index > 0, egui::Button::new("◀"))
-                            .on_hover_text("Commande précédente")
+                        action_icon_button(
+                            ui,
+                            ActionIcon::Left,
+                            self.history_receipt_index > 0,
+                            [48.0, 40.0],
+                            "Commande précédente",
+                        )
                     })
                     .inner
-                    .clicked();
+                    .pressed(ui);
                 let close_clicked = ui
                     .allocate_new_ui(egui::UiBuilder::new().max_rect(close_rect), |ui| {
                         ui.button("Fermer")
                     })
                     .inner
-                    .clicked();
+                    .pressed(ui);
                 let next_clicked = ui
                     .allocate_new_ui(egui::UiBuilder::new().max_rect(next_rect), |ui| {
-                        ui.add_enabled(
+                        action_icon_button(
+                            ui,
+                            ActionIcon::Right,
                             self.history_receipt_index + 1 < self.receipts.len(),
-                            egui::Button::new("▶"),
+                            [48.0, 40.0],
+                            "Commande suivante",
                         )
-                        .on_hover_text("Commande suivante")
                     })
                     .inner
-                    .clicked();
+                    .pressed(ui);
                 if previous_clicked {
                     self.history_receipt_index -= 1;
                 }
@@ -496,7 +516,7 @@ impl App {
                                 .show(ui, |ui| {
                                     ui.horizontal(|ui| {
                                         let name = if item.quantity > 1 {
-                                            format!("{} × {}", item.quantity, item.name)
+                                            format!("{} x {}", item.quantity, item.name)
                                         } else {
                                             item.name.clone()
                                         };
@@ -513,9 +533,12 @@ impl App {
                                     });
                                     for topping in &item.toppings {
                                         let name = if topping.quantity > 1 {
-                                            format!("↳ {} × {}", topping.quantity, topping.name)
+                                            format!(
+                                                "Garniture : {} x {}",
+                                                topping.quantity, topping.name
+                                            )
                                         } else {
-                                            format!("↳ {}", topping.name)
+                                            format!("Garniture : {}", topping.name)
                                         };
                                         ui.horizontal(|ui| {
                                             ui.label(name);

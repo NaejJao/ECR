@@ -15,6 +15,7 @@ impl App {
     /// Prompts for the menu password and opens menu management only after verification.
     fn menu_password_window(&mut self, ctx: &egui::Context) {
         let mut open = self.show_menu_password;
+        let mut cancel_requested = false;
         egui::Window::new("Accès à la gestion du menu")
             .collapsible(false)
             .resizable(false)
@@ -30,7 +31,7 @@ impl App {
                     response.request_focus();
                     self.menu_password_needs_focus = false;
                 }
-                let submit = ui.button("Valider").clicked()
+                let submit = ui.button("Valider").pressed(ui)
                     || (response.lost_focus()
                         && ui.input(|input| input.key_pressed(egui::Key::Enter)));
                 if submit {
@@ -51,11 +52,14 @@ impl App {
                         self.message = Some("Mot de passe incorrect.".into());
                     }
                 }
-                if ui.button("Annuler").clicked() {
-                    self.show_menu_password = false;
-                    self.menu_password.clear();
+                if ui.button("Annuler").pressed(ui) {
+                    cancel_requested = true;
                 }
             });
+        if cancel_requested {
+            self.show_menu_password = false;
+            self.menu_password.clear();
+        }
         self.show_menu_password = open && self.show_menu_password;
     }
 }
@@ -103,15 +107,81 @@ impl eframe::App for App {
                             .color(egui::Color32::WHITE),
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui
-                            .add(header_button(if self.screen == Screen::Order {
-                                "🔒  Configuration"
-                            } else {
-                                "←  Retour"
-                            }))
-                            .clicked()
-                        {
-                            if self.screen == Screen::Order {
+                        let is_order_screen = self.screen == Screen::Order;
+                        let header_width = if is_order_screen { 190.0 } else { 150.0 };
+                        let response =
+                            ui.add(header_button("").min_size([header_width, 44.0].into()));
+                        let rect = response.rect;
+                        let icon_center = egui::pos2(rect.left() + 24.0, rect.center().y);
+                        let stroke = egui::Stroke::new(2.5_f32, egui::Color32::WHITE);
+                        if is_order_screen {
+                            let lock_body = egui::Rect::from_center_size(
+                                icon_center + egui::vec2(0.0, 3.0),
+                                egui::vec2(12.0, 10.0),
+                            );
+                            ui.painter().line_segment(
+                                [
+                                    icon_center + egui::vec2(-4.0, -2.0),
+                                    icon_center + egui::vec2(-4.0, -6.0),
+                                ],
+                                stroke,
+                            );
+                            ui.painter().line_segment(
+                                [
+                                    icon_center + egui::vec2(-4.0, -6.0),
+                                    icon_center + egui::vec2(4.0, -6.0),
+                                ],
+                                stroke,
+                            );
+                            ui.painter().line_segment(
+                                [
+                                    icon_center + egui::vec2(4.0, -6.0),
+                                    icon_center + egui::vec2(4.0, -2.0),
+                                ],
+                                stroke,
+                            );
+                            ui.painter().rect_stroke(
+                                lock_body,
+                                egui::CornerRadius::same(2),
+                                stroke,
+                                egui::StrokeKind::Inside,
+                            );
+                            ui.painter().text(
+                                egui::pos2(
+                                    (rect.left() + 44.0 + rect.right() - 8.0) * 0.5,
+                                    rect.center().y,
+                                ),
+                                egui::Align2::CENTER_CENTER,
+                                "Configuration",
+                                egui::FontId::proportional(18.0),
+                                egui::Color32::WHITE,
+                            );
+                        } else {
+                            ui.painter().circle_stroke(
+                                icon_center,
+                                10.0,
+                                egui::Stroke::new(1.5_f32, egui::Color32::WHITE),
+                            );
+                            let tip = icon_center + egui::vec2(-5.0, 0.0);
+                            ui.painter()
+                                .line_segment([icon_center + egui::vec2(5.0, 0.0), tip], stroke);
+                            ui.painter()
+                                .line_segment([tip + egui::vec2(5.0, -5.0), tip], stroke);
+                            ui.painter()
+                                .line_segment([tip + egui::vec2(5.0, 5.0), tip], stroke);
+                            ui.painter().text(
+                                egui::pos2(
+                                    (rect.left() + 44.0 + rect.right() - 8.0) * 0.5,
+                                    rect.center().y,
+                                ),
+                                egui::Align2::CENTER_CENTER,
+                                "Retour",
+                                egui::FontId::proportional(18.0),
+                                egui::Color32::WHITE,
+                            );
+                        }
+                        if response.pressed(ui) {
+                            if is_order_screen {
                                 self.show_menu_password = true;
                                 self.menu_password_needs_focus = true;
                                 self.menu_password.clear();
@@ -123,7 +193,7 @@ impl eframe::App for App {
                         }
 
                         if self.screen == Screen::Order
-                            && ui.add(header_button("Bilan du jour")).clicked()
+                            && ui.add(header_button("Bilan du jour")).pressed(ui)
                         {
                             self.screen = Screen::Daily;
                             self.message = None;
@@ -177,7 +247,7 @@ impl eframe::App for App {
                                 ],
                                 stroke,
                             );
-                            if response.clicked() {
+                            if response.pressed(ui) {
                                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                             }
                         }

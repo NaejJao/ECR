@@ -30,7 +30,7 @@ impl App {
                         .on_hover_text("Nom de la catégorie");
                     if ui
                         .add(primary_button("Ajouter la catégorie", [135.0, 42.0]))
-                        .clicked()
+                        .pressed(ui)
                     {
                         let n = self.new_category.trim();
                         if n.is_empty() {
@@ -72,7 +72,7 @@ impl App {
                         let occupied = self.products.iter().any(|p| p.category == i);
                         if ui
                             .add_enabled(!occupied, egui::Button::new("Supprimer"))
-                            .clicked()
+                            .pressed(ui)
                         {
                             delete_cat = Some(i);
                         }
@@ -118,7 +118,7 @@ impl App {
                                     .fill(fill)
                                     .min_size([150.0, 52.0].into()),
                             )
-                            .clicked()
+                            .pressed(ui)
                         {
                             self.new_category_index = index;
                             self.edit_product = None;
@@ -150,7 +150,7 @@ impl App {
                             egui::TextEdit::singleline(&mut self.new_image_path)
                                 .hint_text("Chemin de l’image (PNG/JPEG, facultatif)"),
                         );
-                        if ui.button("Choisir…").clicked() {
+                        if ui.button("Choisir…").pressed(ui) {
                             if let Some(path) = rfd::FileDialog::new()
                                 .add_filter("Images", &["png", "jpg", "jpeg"])
                                 .pick_file()
@@ -163,7 +163,7 @@ impl App {
                     ui.checkbox(&mut self.new_topping, "C’est une garniture");
                     if ui
                         .add(primary_button("Ajouter le produit", [140.0, 42.0]))
-                        .clicked()
+                        .pressed(ui)
                     {
                         let n = self.new_name.trim();
                         if n.is_empty() {
@@ -220,7 +220,7 @@ impl App {
                                             egui::TextEdit::singleline(&mut self.edit_image_path)
                                                 .hint_text("Chemin de l’image (PNG/JPEG, facultatif)"),
                                         );
-                                        if ui.button("Choisir…").clicked() {
+                                        if ui.button("Choisir…").pressed(ui) {
                                             if let Some(path) = rfd::FileDialog::new()
                                                 .add_filter("Images", &["png", "jpg", "jpeg"])
                                                 .pick_file()
@@ -239,7 +239,7 @@ impl App {
                                     ui.horizontal(|ui| {
                                         if ui
                                             .add(primary_button("Enregistrer", [145.0, 42.0]))
-                                            .clicked()
+                                            .pressed(ui)
                                         {
                                             let n = self.edit_name.trim();
                                             if n.is_empty() {
@@ -275,7 +275,7 @@ impl App {
                                                     Some("Saisissez un prix valide (0 accepté pour un produit offert).".into());
                                             }
                                         }
-                                        if ui.button("Annuler").clicked() {
+                                        if ui.button("Annuler").pressed(ui) {
                                             self.edit_product = None;
                                         }
                                     });
@@ -309,15 +309,15 @@ impl App {
                                                 cat,
                                                 if p.topping { " · Garniture" } else { "" }
                                             ));
-                                            if reorder_arrow_button(ui, true, can_move_up).clicked()
+                                            if reorder_arrow_button(ui, true, can_move_up).pressed(ui)
                                             {
                                                 reorder_product = Some((i, true));
                                             }
-                                            if reorder_arrow_button(ui, false, can_move_down).clicked()
+                                            if reorder_arrow_button(ui, false, can_move_down).pressed(ui)
                                             {
                                                 reorder_product = Some((i, false));
                                             }
-                                            if ui.button("Modifier").clicked() {
+                                            if ui.button("Modifier").pressed(ui) {
                                                 self.edit_name = p.name.clone();
                                                 self.edit_price = format!(
                                                     "{},{:02}",
@@ -330,7 +330,7 @@ impl App {
                                                     p.image_path.clone().unwrap_or_default();
                                                 self.edit_product = Some(i);
                                             }
-                                            if ui.button("Supprimer").clicked() {
+                                            if ui.button("Supprimer").pressed(ui) {
                                                 delete_product = Some(i);
                                             }
                                         });

@@ -59,7 +59,7 @@ impl App {
                         !orders.is_empty(),
                         primary_button("Exporter les commandes", [ui.available_width(), 50.0]),
                     )
-                    .clicked()
+                    .pressed(ui)
                 {
                     self.export(date, &orders);
                 }
@@ -87,18 +87,55 @@ impl App {
                         .corner_radius(egui::CornerRadius::same(12))
                         .inner_margin(egui::Margin::symmetric(12, 5))
                         .show(ui, |ui| {
-                            let label = if expanded {
-                                format!("⌄  {category}")
-                            } else {
-                                format!("›  {category}")
-                            };
                             let width = ui.available_width();
                             let response = ui.add(
-                                egui::Button::new(egui::RichText::new(label).size(18.0).strong())
+                                egui::Button::new("")
                                     .fill(egui::Color32::TRANSPARENT)
                                     .stroke(egui::Stroke::NONE)
                                     .min_size([width, 48.0].into()),
                             );
+                            ui.painter().text(
+                                egui::pos2(response.rect.left() + 40.0, response.rect.center().y),
+                                egui::Align2::LEFT_CENTER,
+                                category,
+                                egui::FontId::proportional(18.0),
+                                ui.visuals().text_color(),
+                            );
+                            let arrow_center =
+                                egui::pos2(response.rect.left() + 18.0, response.rect.center().y);
+                            let arrow_stroke =
+                                egui::Stroke::new(2.0_f32, ui.visuals().text_color());
+                            if expanded {
+                                ui.painter().line_segment(
+                                    [
+                                        arrow_center + egui::vec2(-5.0, -2.0),
+                                        arrow_center + egui::vec2(0.0, 3.0),
+                                    ],
+                                    arrow_stroke,
+                                );
+                                ui.painter().line_segment(
+                                    [
+                                        arrow_center + egui::vec2(0.0, 3.0),
+                                        arrow_center + egui::vec2(5.0, -2.0),
+                                    ],
+                                    arrow_stroke,
+                                );
+                            } else {
+                                ui.painter().line_segment(
+                                    [
+                                        arrow_center + egui::vec2(-2.0, -5.0),
+                                        arrow_center + egui::vec2(3.0, 0.0),
+                                    ],
+                                    arrow_stroke,
+                                );
+                                ui.painter().line_segment(
+                                    [
+                                        arrow_center + egui::vec2(3.0, 0.0),
+                                        arrow_center + egui::vec2(-2.0, 5.0),
+                                    ],
+                                    arrow_stroke,
+                                );
+                            }
                             let count_rect = egui::Rect::from_min_size(
                                 egui::pos2(response.rect.right() - 70.0, response.rect.top()),
                                 egui::vec2(58.0, response.rect.height()),
@@ -110,7 +147,7 @@ impl App {
                                 egui::FontId::proportional(20.0),
                                 ui.visuals().text_color(),
                             );
-                            clicked = response.clicked();
+                            clicked = response.pressed(ui);
                         });
                     if clicked {
                         if expanded {
