@@ -19,10 +19,32 @@ impl App {
             ui,
             "CONFIGURATION",
             "Gestion du menu",
-            "Gérez les catégories, leurs couleurs, les produits et les garnitures.",
+            "Gérez les catégories, leurs couleurs, les produits, les garnitures et l’export.",
         );
         ui.add_space(16.0);
         ui.columns(2, |cols| {
+            cols[0].label(egui::RichText::new("EXPORT PDF").strong());
+            card().show(&mut cols[0], |ui| {
+                ui.label("Dossier d’export");
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.export_directory)
+                        .hint_text("Dossier, ex. /media/vous/USB")
+                        .desired_width(ui.available_width()),
+                );
+                ui.horizontal(|ui| {
+                    if ui.button("Choisir…").pressed(ui) {
+                        if let Some(path) = rfd::FileDialog::new().pick_folder() {
+                            self.export_directory = path.display().to_string();
+                            self.save_menu();
+                        }
+                    }
+                    if ui.button("Enregistrer").pressed(ui) {
+                        self.save_menu();
+                        self.message = Some("Dossier d’export enregistré.".into());
+                    }
+                });
+            });
+            cols[0].add_space(12.0);
             cols[0].label(egui::RichText::new("CATÉGORIES").strong());
             card().show(&mut cols[0], |ui| {
                 ui.horizontal(|ui| {
@@ -61,6 +83,16 @@ impl App {
                                 self.categories[i] = previous_name;
                                 self.message =
                                     Some("Le nom d’une catégorie ne peut pas être vide.".into());
+                            } else if self
+                                .categories
+                                .iter()
+                                .enumerate()
+                                .any(|(index, category)| {
+                                    index != i && category.eq_ignore_ascii_case(name)
+                                })
+                            {
+                                self.categories[i] = previous_name;
+                                self.message = Some("Cette catégorie existe déjà.".into());
                             } else {
                                 self.categories[i] = name.to_owned();
                                 self.save_menu();

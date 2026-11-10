@@ -71,6 +71,9 @@ pub(crate) struct MenuData {
     pub(crate) colors: Vec<[u8; 3]>,
     /// Products belonging to the configured categories.
     pub(crate) products: Vec<Product>,
+    /// Default destination folder for PDF exports.
+    #[serde(default)]
+    pub(crate) export_directory: String,
 }
 
 /// Wrapper for the receipt collection stored in `orders.json`.
@@ -82,6 +85,7 @@ pub(crate) struct History {
 
 /// Shape of the end-of-day JSON export written to the selected USB directory.
 #[derive(Serialize)]
+#[allow(dead_code)]
 pub(crate) struct Export<'a> {
     /// Business date represented as an ISO `YYYY-MM-DD` string.
     pub(crate) business_date: String,

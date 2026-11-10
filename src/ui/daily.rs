@@ -1,10 +1,11 @@
-//! Daily sales overview, expandable category breakdowns, and USB export controls.
+//! Daily sales overview, expandable category breakdowns, and PDF export controls.
 //!
 //! The report includes only receipts completed during the current local calendar day.
+//! Exports can cover a configurable date range (default: current month).
 //! Topping prices remain part of sales totals, while category quantities count base items.
 
 use crate::{app::App, domain::*, ui::widgets::*};
-use chrono::{Local, TimeZone};
+use chrono::{Datelike, Local, NaiveDate, TimeZone};
 use eframe::egui;
 
 impl App {
@@ -61,30 +62,64 @@ impl App {
             // Measure the export card's natural height, then match the overview to it.
             let export_card_height = card()
                 .show(&mut cols[1], |ui| {
-                    ui.label(
-                        egui::RichText::new("EXPORT DE FIN DE JOURNÉE")
-                            .size(18.0)
-                            .strong(),
-                    );
+                    ui.label(egui::RichText::new("EXPORT PDF").size(18.0).strong());
                     ui.add_space(8.0);
-                    ui.label("Enregistrer le détail des commandes sur USB");
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.export_directory)
-                            .hint_text("Dossier USB, ex. /media/vous/USB")
-                            .desired_width(ui.available_width()),
-                    );
+                    ui.label("Période (AAAA-MM-JJ)");
+                    ui.horizontal(|ui| {
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.export_from)
+                                .desired_width(130.0)
+                                .hint_text("Début"),
+                        );
+                        ui.label("→");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.export_to)
+                                .desired_width(130.0)
+                                .hint_text("Fin"),
+                        );
+                    });
+                    ui.horizontal(|ui| {
+                        if ui.button("Aujourd’hui").pressed(ui) {
+                            let d = Local::now().date_naive().format("%Y-%m-%d").to_string();
+                            self.export_from = d.clone();
+                            self.export_to = d;
+                        }
+                        if ui.button("Mois en cours").pressed(ui) {
+                            let today = Local::now().date_naive();
+                            self.export_from = today
+                                .with_day(1)
+                                .unwrap_or(today)
+                                .format("%Y-%m-%d")
+                                .to_string();
+                            self.export_to = today.format("%Y-%m-%d").to_string();
+                        }
+                    });
+                    let export_orders =
+                        NaiveDate::parse_from_str(self.export_from.trim(), "%Y-%m-%d")
+                            .ok()
+                            .zip(NaiveDate::parse_from_str(self.export_to.trim(), "%Y-%m-%d").ok())
+                            .filter(|(from, to)| from <= to)
+                            .map(|(from, to)| self.orders_in_range(from, to))
+                            .unwrap_or_default();
                     ui.add_space(8.0);
                     if ui
                         .add_enabled(
-                            !orders.is_empty(),
-                            primary_button("Exporter les commandes", [ui.available_width(), 58.0]),
+                            !export_orders.is_empty(),
+                            primary_button("Exporter en PDF", [ui.available_width(), 58.0]),
                         )
                         .pressed(ui)
                     {
-                        self.export(date, &orders);
+                        self.export_pdf();
                     }
-                    if orders.is_empty() {
-                        ui.small("Aucune commande terminée aujourd’hui.");
+                    if self.export_directory.trim().is_empty() {
+                        ui.small("Dossier d’export non configuré (Configuration).");
+                    } else if export_orders.is_empty() {
+                        ui.small("Aucune commande dans la période sélectionnée.");
+                    } else {
+                        ui.small(format!(
+                            "{} commande(s) dans la période sélectionnée.",
+                            export_orders.len()
+                        ));
                     }
                 })
                 .response

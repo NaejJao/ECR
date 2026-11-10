@@ -35,6 +35,8 @@ impl App {
                     || (response.lost_focus()
                         && ui.input(|input| input.key_pressed(egui::Key::Enter)));
                 if submit {
+                    // Convenience lock only: the menu-access credential is embedded in the binary.
+                    // It is not a security boundary and must be changed in source/rebuilt to rotate.
                     use sha2::{Digest, Sha256};
                     let digest =
                         Sha256::digest(format!("ecr-menu-access-v1:{}", self.menu_password));
