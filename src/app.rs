@@ -4,15 +4,15 @@
 //! those screens and performs durable writes for menus, completed orders, and exports.
 
 use crate::{
-    domain::{attach_topping, canonical_category, data_path, money, theme},
+    domain::{attach_topping_to_selected, canonical_category, data_path, money, theme},
     model::{History, Item, MenuData, Product, Receipt},
 };
 use chrono::{Datelike, Local, NaiveDate, TimeZone};
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     fs,
-    io::BufWriter,
     path::PathBuf,
+    time::SystemTime,
 };
 
 /// Mutable runtime state shared by the cashier screens.
@@ -34,6 +34,10 @@ pub(crate) struct App {
     pub(crate) product_images: HashMap<String, Option<eframe::egui::TextureHandle>>,
     /// Upper-left source pixel used as the background of each product-image panel.
     pub(crate) product_image_corners: HashMap<String, eframe::egui::Color32>,
+    /// Last observed modification time of each product image, used to reload edited files.
+    pub(crate) product_image_stamps: HashMap<String, Option<SystemTime>>,
+    /// Image-loading progress while the splash screen is visible; `None` once startup is done.
+    pub(crate) startup: Option<Startup>,
     /// Indicates that the menu file was present but could not be safely loaded.
     pub(crate) menu_bad: bool,
     /// Completed orders, in chronological insertion order.
@@ -42,6 +46,8 @@ pub(crate) struct App {
     pub(crate) history_bad: bool,
     /// Items currently being entered by the cashier.
     pub(crate) order: Vec<Item>,
+    /// Base item in the open order that will receive the next topping.
+    pub(crate) selected_line: Option<usize>,
     /// Selected category on the sale screen.
     pub(crate) selected: usize,
     /// Currently visible application screen.
@@ -76,8 +82,12 @@ pub(crate) struct App {
     pub(crate) export_from: String,
     /// End date for export range (YYYY-MM-DD).
     pub(crate) export_to: String,
+    /// Generated PDF waiting for the user to confirm its file name and save it.
+    pub(crate) export_preview: Option<ExportPreview>,
     /// Category names whose detail tables are expanded in the daily report.
     pub(crate) expanded_categories: BTreeSet<String>,
+    /// Whether the read-only order display is open on the second screen.
+    pub(crate) show_order_viewport: bool,
     /// Whether the read-only order-history dialog is open.
     pub(crate) show_previous_order: bool,
     /// Index of the receipt currently shown in the order-history dialog.
@@ -101,6 +111,46 @@ pub(crate) enum Screen {
     Menu,
     /// Daily totals and order export.
     Daily,
+}
+
+/// Generated PDF and the report data needed to show it before saving.
+pub(crate) struct ExportPreview {
+    /// Complete PDF document held in memory until the user confirms the file name.
+    pub(crate) pdf: Vec<u8>,
+    /// Editable destination file name.
+    pub(crate) file_name: String,
+    /// First local date included in the report.
+    pub(crate) from: NaiveDate,
+    /// Last local date included in the report.
+    pub(crate) to: NaiveDate,
+    /// Number of completed orders included in the report.
+    pub(crate) order_count: usize,
+    /// Sum of the included order totals.
+    pub(crate) total: u64,
+    /// Per-category, per-product quantities and subtotals.
+    pub(crate) summary: BTreeMap<String, BTreeMap<String, (u64, u64)>>,
+    /// Categories in the same order as the generated PDF.
+    pub(crate) ordered_categories: Vec<String>,
+}
+
+/// Progress of the product-image preload shown on the startup splash screen.
+pub(crate) struct Startup {
+    /// Images that have not been decoded yet.
+    pub(crate) pending: Vec<StartupImage>,
+    /// Total number of unique configured images.
+    pub(crate) total: usize,
+    /// Number of images processed so far.
+    pub(crate) loaded: usize,
+    /// Product name currently being decoded, shown on the splash screen.
+    pub(crate) current: Option<String>,
+}
+
+/// One product image queued for decoding during startup.
+pub(crate) struct StartupImage {
+    /// Filesystem path to the image.
+    pub(crate) path: String,
+    /// Product name displayed while the image is loaded.
+    pub(crate) name: String,
 }
 
 impl Default for App {
@@ -169,10 +219,13 @@ impl Default for App {
             products,
             product_images: HashMap::new(),
             product_image_corners: HashMap::new(),
+            product_image_stamps: HashMap::new(),
+            startup: None,
             menu_bad,
             receipts,
             history_bad,
             order: Vec::new(),
+            selected_line: None,
             selected: 0,
             screen: Screen::Order,
             new_category: String::new(),
@@ -190,7 +243,9 @@ impl Default for App {
             export_directory,
             export_from,
             export_to,
+            export_preview: None,
             expanded_categories: BTreeSet::new(),
+            show_order_viewport: false,
             show_previous_order: false,
             history_receipt_index: 0,
             show_menu_password: false,
@@ -255,7 +310,7 @@ impl App {
             toppings: Vec::new(),
         };
         if topping {
-            match attach_topping(&mut self.order, item, category) {
+            match attach_topping_to_selected(&mut self.order, item, category, self.selected_line) {
                 Some(true) => self.message = None,
                 Some(false) => {}
                 None => {
@@ -271,18 +326,20 @@ impl App {
                 .iter()
                 .any(|product| product.category == category && product.topping);
             if !category_has_toppings {
-                if let Some(existing) = self.order.iter_mut().find(|line| {
+                if let Some(index) = self.order.iter().position(|line| {
                     line.category_index == category
                         && line.name == item.name
                         && line.price == item.price
                         && line.toppings.is_empty()
                 }) {
-                    existing.quantity = existing.quantity.saturating_add(1);
+                    self.order[index].quantity = self.order[index].quantity.saturating_add(1);
+                    self.selected_line = Some(index);
                     self.message = None;
                     return;
                 }
             }
             self.order.push(item);
+            self.selected_line = Some(self.order.len() - 1);
             self.message = None;
         }
     }
@@ -313,6 +370,7 @@ impl App {
         match self.save_orders() {
             Ok(()) => {
                 self.order.clear();
+                self.selected_line = None;
                 self.message = Some("Commande validée et enregistrée.".into());
             }
             Err(e) => {
@@ -392,14 +450,10 @@ impl App {
             .collect()
     }
 
-    /// Exports receipts from the configured date range as a readable PDF summary.
-    pub(crate) fn export_pdf(&mut self) {
-        let dir = self.export_directory.trim();
-        if dir.is_empty() {
-            self.message =
-                Some("Configurez le dossier d’export dans la fenêtre de configuration.".into());
-            return;
-        }
+    /// Generates the PDF for the configured date range and opens its preview.
+    ///
+    /// Nothing is written to disk until [`Self::save_export_preview`] is called from the preview.
+    pub(crate) fn generate_export_preview(&mut self) {
         let from = match NaiveDate::parse_from_str(self.export_from.trim(), "%Y-%m-%d") {
             Ok(date) => date,
             Err(_) => {
@@ -423,40 +477,56 @@ impl App {
             self.message = Some("Aucune commande dans la période sélectionnée.".into());
             return;
         }
-        let base = if from == to {
-            format!("ecr-export-{}", from.format("%Y-%m-%d"))
-        } else {
-            format!(
-                "ecr-export-{}_{}",
-                from.format("%Y-%m-%d"),
-                to.format("%Y-%m-%d")
-            )
-        };
-        let mut path = PathBuf::from(dir).join(format!("{base}.pdf"));
-        let mut counter = 2;
-        while path.exists() {
-            path = PathBuf::from(dir).join(format!("{base}-{counter}.pdf"));
-            counter += 1;
-        }
         let summary = self.summarize_orders(&orders);
-        match generate_export_pdf(
-            &path,
-            from,
-            to,
-            &orders,
-            &summary,
-            &self.categories,
-            &self.colors,
-        ) {
+        let ordered_categories = ordered_summary_categories(&summary, &self.categories);
+        let total = orders.iter().map(|order| order.total).sum();
+        match generate_export_pdf(from, to, &orders, &summary, &self.categories, &self.colors) {
+            Ok(pdf) => {
+                self.export_preview = Some(ExportPreview {
+                    pdf,
+                    file_name: default_export_file_name(from, to),
+                    from,
+                    to,
+                    order_count: orders.len(),
+                    total,
+                    summary,
+                    ordered_categories,
+                });
+                self.message = None;
+            }
+            Err(error) => {
+                self.message = Some(format!("Échec de la génération du PDF : {error}"));
+            }
+        }
+    }
+
+    /// Saves the generated PDF to the configured export folder.
+    ///
+    /// Returns `true` when the file was written and the preview can be closed.
+    pub(crate) fn save_export_preview(&mut self, preview: &ExportPreview) -> bool {
+        let directory = self.export_directory.trim();
+        if directory.is_empty() {
+            self.message =
+                Some("Configurez le dossier d’export dans la fenêtre de configuration.".into());
+            return false;
+        }
+        let Some(file_name) = normalize_export_file_name(&preview.file_name) else {
+            self.message = Some("Le nom du fichier PDF est invalide.".into());
+            return false;
+        };
+        let path = unique_export_path(std::path::Path::new(directory), &file_name);
+        match fs::write(&path, &preview.pdf) {
             Ok(()) => {
                 self.message = Some(format!(
                     "{} commandes exportées vers {}",
-                    orders.len(),
+                    preview.order_count,
                     path.display()
                 ));
+                true
             }
-            Err(e) => {
-                self.message = Some(format!("Échec de l’export PDF : {e}"));
+            Err(error) => {
+                self.message = Some(format!("Échec de l’enregistrement du PDF : {error}"));
+                false
             }
         }
     }
@@ -524,14 +594,13 @@ fn write_json_atomically(path: &std::path::Path, bytes: &[u8]) -> std::io::Resul
 }
 
 fn generate_export_pdf(
-    path: &std::path::Path,
     from: NaiveDate,
     to: NaiveDate,
     orders: &[Receipt],
     summary: &BTreeMap<String, BTreeMap<String, (u64, u64)>>,
     categories: &[String],
     colors: &[[u8; 3]],
-) -> std::io::Result<()> {
+) -> std::io::Result<Vec<u8>> {
     use printpdf::*;
 
     let (doc, page1, layer1) = PdfDocument::new("ECR Export", Mm(210.0), Mm(297.0), "Layer 1");
@@ -577,26 +646,7 @@ fn generate_export_pdf(
     );
     y -= 10.0;
 
-    let mut ordered: Vec<String> = Vec::new();
-    for category in categories {
-        if let Some((name, _)) = summary
-            .iter()
-            .find(|(name, _)| name.eq_ignore_ascii_case(category.trim()))
-        {
-            if !ordered
-                .iter()
-                .any(|k: &String| k.eq_ignore_ascii_case(name))
-            {
-                ordered.push(name.clone());
-            }
-        }
-    }
-    for name in summary.keys() {
-        if !ordered.iter().any(|k| k.eq_ignore_ascii_case(name)) {
-            ordered.push(name.clone());
-        }
-    }
-
+    let ordered = ordered_summary_categories(summary, categories);
     let ensure_space = |y: &mut f32,
                         needed: f32,
                         doc: &PdfDocumentReference,
@@ -662,14 +712,95 @@ fn generate_export_pdf(
         y -= 4.0;
     }
 
-    let file = fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(path)?;
-    doc.save(&mut BufWriter::new(file))
-        .map_err(std::io::Error::other)?;
-    Ok(())
+    doc.save_to_bytes().map_err(std::io::Error::other)
+}
+
+/// Builds the default PDF file name for an export range.
+fn default_export_file_name(from: NaiveDate, to: NaiveDate) -> String {
+    if from == to {
+        format!("ecr-export-{}.pdf", from.format("%Y-%m-%d"))
+    } else {
+        format!(
+            "ecr-export-{}_{}.pdf",
+            from.format("%Y-%m-%d"),
+            to.format("%Y-%m-%d")
+        )
+    }
+}
+
+/// Returns a safe PDF file name derived from the editable preview field.
+fn normalize_export_file_name(input: &str) -> Option<String> {
+    let name = std::path::Path::new(input.trim())
+        .file_name()?
+        .to_str()?
+        .trim();
+    if name.is_empty() || name.eq_ignore_ascii_case(".pdf") {
+        return None;
+    }
+    let mut name: String = name
+        .chars()
+        .map(|character| {
+            if character.is_control()
+                || matches!(
+                    character,
+                    '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*'
+                )
+            {
+                '-'
+            } else {
+                character
+            }
+        })
+        .collect();
+    if name.to_ascii_lowercase().ends_with(".pdf") {
+        name.truncate(name.len() - 4);
+    }
+    name.push_str(".pdf");
+    Some(name)
+}
+
+/// Adds a numeric suffix when the requested export file already exists.
+fn unique_export_path(directory: &std::path::Path, file_name: &str) -> PathBuf {
+    let path = directory.join(file_name);
+    if !path.exists() {
+        return path;
+    }
+    let stem = file_name.strip_suffix(".pdf").unwrap_or(file_name);
+    let mut counter = 2;
+    loop {
+        let candidate = directory.join(format!("{stem}-{counter}.pdf"));
+        if !candidate.exists() {
+            return candidate;
+        }
+        counter += 1;
+    }
+}
+
+/// Orders summary categories by the configured menu order, then appends legacy names.
+fn ordered_summary_categories(
+    summary: &BTreeMap<String, BTreeMap<String, (u64, u64)>>,
+    categories: &[String],
+) -> Vec<String> {
+    let mut ordered = Vec::new();
+    for category in categories {
+        if let Some((name, _)) = summary
+            .iter()
+            .find(|(name, _)| name.eq_ignore_ascii_case(category.trim()))
+        {
+            if !ordered
+                .iter()
+                .any(|known: &String| known.eq_ignore_ascii_case(name))
+            {
+                ordered.push(name.clone());
+            }
+        }
+    }
+    for name in summary.keys() {
+        if !ordered.iter().any(|known| known.eq_ignore_ascii_case(name)) {
+            ordered.push(name.clone());
+        }
+    }
+    ordered
 }
 
 /// Configures the maximized full-screen viewport and launches the native GUI.
@@ -685,6 +816,55 @@ pub(crate) fn run() -> eframe::Result {
     eframe::run_native(
         "ECR — WaffleTime",
         options,
-        Box::new(|_| Ok(Box::new(App::default()))),
+        Box::new(|_| {
+            let mut app = App::default();
+            app.begin_startup();
+            Ok(Box::new(app))
+        }),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Confirms the export path now returns PDF bytes without touching the filesystem.
+    #[test]
+    fn export_pdf_is_generated_in_memory() {
+        let from = NaiveDate::from_ymd_opt(2026, 11, 1).expect("valid start date");
+        let to = NaiveDate::from_ymd_opt(2026, 11, 30).expect("valid end date");
+        let summary = BTreeMap::new();
+        let pdf = generate_export_pdf(
+            from,
+            to,
+            &[],
+            &summary,
+            &["Gaufres".into()],
+            &[[210, 232, 211]],
+        )
+        .expect("PDF generation should succeed");
+        assert!(pdf.starts_with(b"%PDF-"));
+    }
+
+    /// Ensures preview file names cannot escape the export folder or lose their PDF extension.
+    #[test]
+    fn export_file_names_are_sanitized_and_keep_pdf_extension() {
+        assert_eq!(
+            normalize_export_file_name(" bilan.pdf "),
+            Some("bilan.pdf".into())
+        );
+        assert_eq!(
+            normalize_export_file_name("bilan"),
+            Some("bilan.pdf".into())
+        );
+        assert_eq!(
+            normalize_export_file_name("../secret.pdf"),
+            Some("secret.pdf".into())
+        );
+        assert_eq!(
+            normalize_export_file_name("a:b.pdf"),
+            Some("a-b.pdf".into())
+        );
+        assert_eq!(normalize_export_file_name(""), None);
+    }
 }

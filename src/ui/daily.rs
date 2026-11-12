@@ -4,7 +4,11 @@
 //! Exports can cover a configurable date range (default: current month).
 //! Topping prices remain part of sales totals, while category quantities count base items.
 
-use crate::{app::App, domain::*, ui::widgets::*};
+use crate::{
+    app::{App, ExportPreview},
+    domain::*,
+    ui::widgets::*,
+};
 use chrono::{Datelike, Local, NaiveDate, TimeZone};
 use eframe::egui;
 
@@ -51,12 +55,7 @@ impl App {
         );
         ui.heading(egui::RichText::new("Bilan").size(36.0).strong());
         ui.label(egui::RichText::new("Résumé des commandes terminées aujourd’hui.").size(18.0));
-        ui.horizontal(|ui| {
-            ui.label(date.format("%d/%m/%Y").to_string());
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.small("Les garnitures sont incluses dans les ventes, pas dans les quantités par catégorie.");
-            });
-        });
+        ui.label(date.format("%d/%m/%Y").to_string());
         ui.add_space(12.0);
         ui.columns(2, |cols| {
             // Measure the export card's natural height, then match the overview to it.
@@ -64,27 +63,25 @@ impl App {
                 .show(&mut cols[1], |ui| {
                     ui.label(egui::RichText::new("EXPORT PDF").size(18.0).strong());
                     ui.add_space(8.0);
-                    ui.label("Période (AAAA-MM-JJ)");
-                    ui.horizontal(|ui| {
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.export_from)
-                                .desired_width(130.0)
-                                .hint_text("Début"),
+                    ui.label("Période");
+                    ui.horizontal_wrapped(|ui| {
+                        date_input(ui, "export_from", &mut self.export_from, "Début", 130.0);
+                        ui.label(
+                            egui::RichText::new("au").color(egui::Color32::from_rgb(102, 117, 103)),
                         );
-                        ui.label("→");
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.export_to)
-                                .desired_width(130.0)
-                                .hint_text("Fin"),
-                        );
-                    });
-                    ui.horizontal(|ui| {
-                        if ui.button("Aujourd’hui").pressed(ui) {
+                        date_input(ui, "export_to", &mut self.export_to, "Fin", 130.0);
+                        if ui
+                            .add(egui::Button::new("Aujourd’hui").min_size(egui::vec2(0.0, 40.0)))
+                            .pressed(ui)
+                        {
                             let d = Local::now().date_naive().format("%Y-%m-%d").to_string();
                             self.export_from = d.clone();
                             self.export_to = d;
                         }
-                        if ui.button("Mois en cours").pressed(ui) {
+                        if ui
+                            .add(egui::Button::new("Mois en cours").min_size(egui::vec2(0.0, 40.0)))
+                            .pressed(ui)
+                        {
                             let today = Local::now().date_naive();
                             self.export_from = today
                                 .with_day(1)
@@ -105,11 +102,11 @@ impl App {
                     if ui
                         .add_enabled(
                             !export_orders.is_empty(),
-                            primary_button("Exporter en PDF", [ui.available_width(), 58.0]),
+                            primary_button("Générer bilan", [ui.available_width(), 58.0]),
                         )
                         .pressed(ui)
                     {
-                        self.export_pdf();
+                        self.generate_export_preview();
                     }
                     if self.export_directory.trim().is_empty() {
                         ui.small("Dossier d’export non configuré (Configuration).");
@@ -145,12 +142,18 @@ impl App {
             .max_height(ui.available_height().max(240.0))
             .show(ui, |ui| {
                 for (category, count) in &ordered_counts {
-                    let color = self
+                    let category_index = self
                         .categories
                         .iter()
-                        .position(|name| name.eq_ignore_ascii_case(category))
+                        .position(|name| name.eq_ignore_ascii_case(category));
+                    let color = category_index
                         .and_then(|i| self.colors.get(i).copied())
                         .unwrap_or_else(default_theme);
+                    let has_toppings = category_index.is_some_and(|index| {
+                        self.products
+                            .iter()
+                            .any(|product| product.topping && product.category == index)
+                    });
                     let expanded = self.expanded_categories.contains(category);
                     let mut clicked = false;
                     egui::Frame::new()
@@ -220,6 +223,18 @@ impl App {
                             );
                             clicked = response.pressed(ui);
                         });
+                    if has_toppings {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.add_space(40.0);
+                            ui.label(
+                                egui::RichText::new(
+                                    "Les garnitures sont incluses dans les ventes, pas dans les quantités par catégorie.",
+                                )
+                                .size(15.0)
+                                .color(egui::Color32::from_rgb(102, 117, 103)),
+                            );
+                        });
+                    }
                     if clicked {
                         if expanded {
                             self.expanded_categories.remove(category);
@@ -260,4 +275,152 @@ impl App {
             ui.label(message);
         }
     }
+
+    /// Shows the generated PDF report with an editable file name and a save action.
+    ///
+    /// The preview is drawn from the same summary used to build the PDF, so the document is only
+    /// written to disk once the user presses **Sauvegarder**.
+    pub(crate) fn export_preview_window(&mut self, ctx: &egui::Context) {
+        let Some(mut preview) = self.export_preview.take() else {
+            return;
+        };
+        let mut open = true;
+        let mut close_requested = false;
+        let mut save = false;
+        egui::Window::new("Aperçu du bilan")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(true)
+            .default_width(880.0)
+            .default_height(740.0)
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("Nom du fichier").strong());
+                    ui.add(
+                        egui::TextEdit::singleline(&mut preview.file_name)
+                            .desired_width(360.0)
+                            .hint_text("bilan.pdf"),
+                    );
+                    if ui
+                        .add(primary_button("Sauvegarder", [160.0, 44.0]))
+                        .pressed(ui)
+                    {
+                        save = true;
+                    }
+                    if ui.button("Fermer").pressed(ui) {
+                        close_requested = true;
+                    }
+                });
+                if self.export_directory.trim().is_empty() {
+                    ui.small("Dossier d’export non configuré (Configuration).");
+                }
+                if let Some(message) = &self.message {
+                    ui.label(message);
+                }
+                ui.separator();
+                egui::ScrollArea::both()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        preview_page(ui, &preview, &self.categories, &self.colors);
+                    });
+            });
+        if close_requested {
+            open = false;
+        }
+        if save && self.save_export_preview(&preview) {
+            open = false;
+        }
+        if open {
+            self.export_preview = Some(preview);
+        }
+    }
+}
+
+/// Draws the report content that the PDF contains.
+fn preview_page(
+    ui: &mut egui::Ui,
+    preview: &ExportPreview,
+    categories: &[String],
+    colors: &[[u8; 3]],
+) {
+    egui::Frame::new()
+        .fill(egui::Color32::WHITE)
+        .stroke(egui::Stroke::new(
+            1.0_f32,
+            egui::Color32::from_rgb(225, 228, 221),
+        ))
+        .corner_radius(egui::CornerRadius::same(8))
+        .inner_margin(egui::Margin::same(28))
+        .show(ui, |ui| {
+            ui.set_min_width(720.0);
+            ui.label(
+                egui::RichText::new("ECR — Résumé des ventes")
+                    .size(24.0)
+                    .strong(),
+            );
+            let period = if preview.from == preview.to {
+                format!("Période : {}", preview.from.format("%d/%m/%Y"))
+            } else {
+                format!(
+                    "Période : {} au {}",
+                    preview.from.format("%d/%m/%Y"),
+                    preview.to.format("%d/%m/%Y")
+                )
+            };
+            ui.label(period);
+            ui.label(
+                egui::RichText::new(format!(
+                    "Commandes : {}    Total des ventes : {}",
+                    preview.order_count,
+                    money(preview.total)
+                ))
+                .strong(),
+            );
+            ui.add_space(14.0);
+
+            for category in &preview.ordered_categories {
+                let Some(products) = preview.summary.get(category) else {
+                    continue;
+                };
+                let color = categories
+                    .iter()
+                    .position(|known| known.eq_ignore_ascii_case(category.trim()))
+                    .and_then(|index| colors.get(index).copied())
+                    .unwrap_or([80, 80, 80]);
+                let category_total: u64 = products.values().map(|(_, sum)| *sum).sum();
+                egui::Frame::new()
+                    .fill(egui::Color32::from_rgb(color[0], color[1], color[2]))
+                    .corner_radius(egui::CornerRadius::same(6))
+                    .inner_margin(egui::Margin::symmetric(10, 6))
+                    .show(ui, |ui| {
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "{}  (Total: {})",
+                                category,
+                                money(category_total)
+                            ))
+                            .size(18.0)
+                            .strong()
+                            .color(egui::Color32::from_rgb(35, 73, 53)),
+                        );
+                    });
+                egui::Grid::new(("apercu_produits", category))
+                    .num_columns(3)
+                    .spacing([24.0, 6.0])
+                    .striped(true)
+                    .show(ui, |ui| {
+                        ui.label(egui::RichText::new("Produit").strong());
+                        ui.label(egui::RichText::new("Qté").strong());
+                        ui.label(egui::RichText::new("Somme").strong());
+                        ui.end_row();
+                        for (name, (quantity, subtotal)) in products {
+                            ui.label(name);
+                            ui.label(quantity.to_string());
+                            ui.label(money(*subtotal));
+                            ui.end_row();
+                        }
+                    });
+                ui.add_space(14.0);
+            }
+        });
 }

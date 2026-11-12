@@ -137,18 +137,15 @@ impl App {
             } else {
                 cols[1].horizontal_wrapped(|ui| {
                     for (index, category) in self.categories.iter().enumerate() {
-                        let color = self.colors[index];
-                        let fill = if self.new_category_index == index {
-                            egui::Color32::from_rgb(color[0], color[1], color[2])
-                        } else {
-                            egui::Color32::WHITE
-                        };
                         let count = self.products.iter().filter(|p| p.category == index).count();
                         if ui
                             .add(
-                                egui::Button::new(format!("{category}  ·  {count}"))
-                                    .fill(fill)
-                                    .min_size([150.0, 52.0].into()),
+                                category_button(
+                                    egui::RichText::new(format!("{category}  ·  {count}")),
+                                    self.colors[index],
+                                    self.new_category_index == index,
+                                )
+                                .min_size([150.0, 52.0].into()),
                             )
                             .pressed(ui)
                         {

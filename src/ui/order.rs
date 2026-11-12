@@ -3,14 +3,25 @@
 //! Completed receipts are read-only; product images are fitted into a fixed one-third-width
 //! button panel without changing the label and price area.
 
-use crate::{app::App, domain::*, ui::widgets::*};
+use crate::{app::App, domain::*, model::Item, ui::widgets::*};
 use chrono::{Local, TimeZone};
 use eframe::egui;
 
 impl App {
-    /// Loads and caches a product image texture, remembering missing or invalid files too.
-    fn product_texture(&mut self, ctx: &egui::Context, path: &str) -> Option<egui::TextureHandle> {
-        if !self.product_images.contains_key(path) {
+    /// Loads and caches a product image texture, reloading it when the file changes.
+    ///
+    /// Missing or invalid files are cached too, so a broken path is not retried every frame.
+    pub(crate) fn product_texture(
+        &mut self,
+        ctx: &egui::Context,
+        path: &str,
+    ) -> Option<egui::TextureHandle> {
+        let modified = std::fs::metadata(path)
+            .and_then(|metadata| metadata.modified())
+            .ok();
+        let is_current = self.product_images.contains_key(path)
+            && self.product_image_stamps.get(path).copied().flatten() == modified;
+        if !is_current {
             let texture = image::open(path).ok().map(|decoded| {
                 let rgba = decoded.into_rgba8();
                 let size = [rgba.width() as usize, rgba.height() as usize];
@@ -24,7 +35,11 @@ impl App {
                 let color_image = egui::ColorImage::from_rgba_unmultiplied(size, rgba.as_raw());
                 ctx.load_texture(path, color_image, egui::TextureOptions::LINEAR)
             });
+            if texture.is_none() {
+                self.product_image_corners.remove(path);
+            }
             self.product_images.insert(path.to_owned(), texture);
+            self.product_image_stamps.insert(path.to_owned(), modified);
         }
         self.product_images.get(path).cloned().flatten()
     }
@@ -50,22 +65,13 @@ impl App {
                 ui.add_space(10.0);
                 ui.horizontal_wrapped(|ui| {
                     for i in 0..self.categories.len() {
-                        let color = egui::Color32::from_rgb(
-                            self.colors[i][0],
-                            self.colors[i][1],
-                            self.colors[i][2],
-                        );
-                        let fill = if self.selected == i {
-                            color
-                        } else {
-                            egui::Color32::WHITE
-                        };
                         if ui
                             .add(
-                                egui::Button::new(
-                                    egui::RichText::new(&self.categories[i]).strong(),
+                                category_button(
+                                    egui::RichText::new(&self.categories[i]),
+                                    self.colors[i],
+                                    self.selected == i,
                                 )
-                                .fill(fill)
                                 .min_size([160.0, 58.0].into()),
                             )
                             .pressed(ui)
@@ -245,53 +251,41 @@ impl App {
         if let Some(message) = &self.message {
             ui.label(message);
         }
+        if !self.order.is_empty() && self.products.iter().any(|product| product.topping) {
+            ui.label(
+                egui::RichText::new("Touchez une gaufre pour choisir où ajouter les garnitures.")
+                    .size(13.0)
+                    .color(egui::Color32::from_rgb(102, 117, 103)),
+            );
+        }
         let total_height =
             ui.fonts(|fonts| fonts.row_height(&egui::FontId::proportional(36.0))) + 20.0;
         let action_height = 58.0_f32.max(ui.spacing().interact_size.y);
         let footer_height =
             total_height + action_height + 8.0 + ui.spacing().item_spacing.y * 3.0 + 1.0;
         let list_height = (ui.available_height() - footer_height).max(80.0);
+        let selected_line = self.selected_line;
         let mut remove = None;
+        let mut select = None;
         egui::ScrollArea::vertical()
             .max_height(list_height)
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                let numbered: Vec<_> = self
-                    .order
-                    .iter()
-                    .enumerate()
-                    .map(|(i, item)| {
-                        let topping_category = self
-                            .products
-                            .iter()
-                            .any(|p| p.topping && p.category == item.category_index);
-                        let ordinal = self.order[..=i]
-                            .iter()
-                            .filter(|x| x.category_index == item.category_index)
-                            .count();
-                        (topping_category, ordinal)
-                    })
-                    .collect();
-                let mut display_indices: Vec<usize> = (0..self.order.len()).collect();
-                display_indices.sort_by_key(|&index| {
-                    let category = self.order[index].category_index;
-                    if self
-                        .products
-                        .iter()
-                        .any(|product| product.category == category && product.topping)
-                    {
-                        0
-                    } else {
-                        1
-                    }
-                });
-                for i in display_indices {
+                let entries = self.displayed_order();
+                for (i, topping_category, ordinal) in entries {
                     let item = &mut self.order[i];
                     let tint = egui::Color32::from_rgb(item.theme[0], item.theme[1], item.theme[2]);
-                    egui::Frame::new()
+                    let mut frame = egui::Frame::new()
                         .fill(tint)
                         .corner_radius(egui::CornerRadius::same(9))
-                        .inner_margin(egui::Margin::symmetric(8, 5))
+                        .inner_margin(egui::Margin::symmetric(8, 5));
+                    if selected_line == Some(i) {
+                        frame = frame.stroke(egui::Stroke::new(
+                            2.5_f32,
+                            egui::Color32::from_rgb(35, 73, 53),
+                        ));
+                    }
+                    let frame_response = frame
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
                                 let item_name = if item.quantity > 1 {
@@ -299,8 +293,8 @@ impl App {
                                 } else {
                                     item.name.clone()
                                 };
-                                let title = if numbered[i].0 {
-                                    format!("{} {}", item_name, numbered[i].1)
+                                let title = if topping_category {
+                                    format!("{} {}", item_name, ordinal)
                                 } else {
                                     item_name
                                 };
@@ -368,15 +362,30 @@ impl App {
                                     });
                                 }
                             });
-                        });
+                        })
+                        .response
+                        .on_hover_cursor(egui::CursorIcon::PointingHand);
+                    // The whole colored card is the selection target. If one of the
+                    // remove buttons was pressed, removal wins and selection is skipped.
+                    if frame_response.pressed(ui) && remove.is_none() {
+                        select = Some(i);
+                    }
                     ui.add_space(3.0);
                 }
             });
+        if let Some(i) = select {
+            self.selected_line = Some(i);
+        }
         if let Some((i, child)) = remove {
             if let Some(j) = child {
                 self.order[i].toppings.remove(j);
             } else {
                 self.order.remove(i);
+                self.selected_line = match self.selected_line {
+                    Some(selected) if selected == i => None,
+                    Some(selected) if selected > i => Some(selected - 1),
+                    other => other,
+                };
             }
         }
         ui.separator();
@@ -410,6 +419,7 @@ impl App {
                 .pressed(ui)
             {
                 self.order.clear();
+                self.selected_line = None;
             }
         });
     }
@@ -426,20 +436,30 @@ impl App {
         let content_height = receipt
             .items
             .iter()
-            .map(|item| 58.0 + item.toppings.len() as f32 * 24.0)
+            .map(|item| 64.0 + item.toppings.len() as f32 * 28.0)
             .sum::<f32>();
-        let desired_height = (content_height + 190.0).min((screen_height - 40.0).max(240.0));
+        let desired_height = (content_height + 220.0).min((screen_height - 40.0).max(240.0));
         let mut close_history = false;
         egui::Window::new("Historique des commandes")
             .open(&mut self.show_previous_order)
             .resizable(true)
             .collapsible(false)
-            .default_size([620.0, desired_height])
+            .default_size([900.0, desired_height])
             .max_size([
                 ctx.screen_rect().width() - 24.0,
                 (screen_height - 24.0).max(240.0),
             ])
             .show(ctx, |ui| {
+                {
+                    // Keep the history readable from a distance, like the daily report.
+                    let style = ui.style_mut();
+                    style
+                        .text_styles
+                        .insert(egui::TextStyle::Body, egui::FontId::proportional(20.0));
+                    style
+                        .text_styles
+                        .insert(egui::TextStyle::Small, egui::FontId::proportional(16.0));
+                }
                 // Reserve a stable header slot; navigation stays anchored above variable order content.
                 let header_width = ui.available_width();
                 let (header_rect, _) =
@@ -512,7 +532,7 @@ impl App {
                             egui::Frame::new()
                                 .fill(color)
                                 .corner_radius(egui::CornerRadius::same(10))
-                                .inner_margin(egui::Margin::symmetric(12, 8))
+                                .inner_margin(egui::Margin::symmetric(16, 12))
                                 .show(ui, |ui| {
                                     ui.horizontal(|ui| {
                                         let name = if item.quantity > 1 {
@@ -520,14 +540,18 @@ impl App {
                                         } else {
                                             item.name.clone()
                                         };
-                                        ui.label(egui::RichText::new(name).strong());
+                                        ui.label(egui::RichText::new(name).size(20.0).strong());
                                         ui.with_layout(
                                             egui::Layout::right_to_left(egui::Align::Center),
                                             |ui| {
-                                                ui.label(money(
-                                                    item.price
-                                                        .saturating_mul(u64::from(item.quantity)),
-                                                ));
+                                                ui.label(
+                                                    egui::RichText::new(money(
+                                                        item.price.saturating_mul(u64::from(
+                                                            item.quantity,
+                                                        )),
+                                                    ))
+                                                    .size(20.0),
+                                                );
                                             },
                                         );
                                     });
@@ -541,28 +565,33 @@ impl App {
                                             format!("Garniture : {}", topping.name)
                                         };
                                         ui.horizontal(|ui| {
-                                            ui.label(name);
+                                            ui.label(egui::RichText::new(name).size(17.0));
                                             ui.with_layout(
                                                 egui::Layout::right_to_left(egui::Align::Center),
                                                 |ui| {
-                                                    ui.label(money(topping.price.saturating_mul(
-                                                        u64::from(topping.quantity),
-                                                    )));
+                                                    ui.label(
+                                                        egui::RichText::new(money(
+                                                            topping.price.saturating_mul(
+                                                                u64::from(topping.quantity),
+                                                            ),
+                                                        ))
+                                                        .size(17.0),
+                                                    );
                                                 },
                                             );
                                         });
                                     }
                                 });
-                            ui.add_space(6.0);
+                            ui.add_space(10.0);
                         }
                     });
                 ui.separator();
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("Total payé").size(20.0).strong());
+                    ui.label(egui::RichText::new("Total payé").size(24.0).strong());
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.label(
                             egui::RichText::new(money(receipt.total))
-                                .size(28.0)
+                                .size(32.0)
                                 .strong(),
                         );
                     });
@@ -572,4 +601,182 @@ impl App {
             self.show_previous_order = false;
         }
     }
+
+    /// Returns order lines in the display order and with the numbering used by the sale panel.
+    fn displayed_order(&self) -> Vec<(usize, bool, usize)> {
+        let mut entries: Vec<_> = self
+            .order
+            .iter()
+            .enumerate()
+            .map(|(index, item)| {
+                let topping_category = self
+                    .products
+                    .iter()
+                    .any(|product| product.topping && product.category == item.category_index);
+                let ordinal = self.order[..=index]
+                    .iter()
+                    .filter(|line| line.category_index == item.category_index)
+                    .count();
+                (index, topping_category, ordinal)
+            })
+            .collect();
+        entries.sort_by_key(|&(_, topping_category, _)| if topping_category { 0 } else { 1 });
+        entries
+    }
+
+    /// Draws the current order in a separate native window for a second screen.
+    pub(crate) fn order_viewport_ui(&mut self, ctx: &egui::Context) {
+        let mut open = self.show_order_viewport;
+        let mut close_requested = false;
+        ctx.show_viewport_immediate(
+            egui::ViewportId::from_hash_of("ecr-order-display"),
+            egui::ViewportBuilder::default()
+                .with_title("ECR — Commande en cours")
+                .with_inner_size([1280.0, 800.0])
+                .with_min_inner_size([720.0, 480.0])
+                .with_maximized(true),
+            |ctx, class| {
+                if ctx.input(|input| input.viewport().close_requested()) {
+                    close_requested = true;
+                }
+                if class == egui::ViewportClass::Embedded {
+                    egui::Window::new("Commande en cours")
+                        .open(&mut open)
+                        .resizable(true)
+                        .default_size([900.0, 600.0])
+                        .show(ctx, |ui| self.order_display_ui(ui));
+                } else {
+                    egui::CentralPanel::default()
+                        .frame(page_frame())
+                        .show(ctx, |ui| self.order_display_ui(ui));
+                }
+            },
+        );
+        self.show_order_viewport = open && !close_requested;
+    }
+
+    /// Renders the read-only order content split into two equal-width columns.
+    fn order_display_ui(&self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            ui.heading(egui::RichText::new("Commande en cours").size(28.0).strong());
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.label(
+                    egui::RichText::new(format!("À PAYER  {}", money(self.total())))
+                        .size(30.0)
+                        .strong(),
+                );
+            });
+        });
+        ui.separator();
+        if self.order.is_empty() {
+            ui.add_space(24.0);
+            ui.vertical_centered(|ui| {
+                ui.label(egui::RichText::new("Aucune commande en cours.").size(24.0));
+            });
+            return;
+        }
+
+        let entries = self.displayed_order();
+        let split = split_for_two_columns(&entries, &self.order);
+        let (left, right) = entries.split_at(split);
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.columns(2, |columns| {
+                    for (column, entries) in columns.iter_mut().zip([left, right]) {
+                        for &(index, topping_category, ordinal) in entries {
+                            order_display_card(
+                                column,
+                                index,
+                                &self.order[index],
+                                topping_category,
+                                ordinal,
+                            );
+                        }
+                    }
+                });
+            });
+    }
+}
+
+/// Splits order lines into two columns with roughly equal estimated heights.
+fn split_for_two_columns(entries: &[(usize, bool, usize)], order: &[Item]) -> usize {
+    let item_height = |index: usize| 34.0 + order[index].toppings.len() as f32 * 23.0;
+    let total: f32 = entries
+        .iter()
+        .map(|&(index, _, _)| item_height(index))
+        .sum();
+    let half = total / 2.0;
+    let mut accumulated = 0.0;
+    let mut split = 0;
+    for (position, &(index, _, _)) in entries.iter().enumerate() {
+        let height = item_height(index);
+        if position > 0 && accumulated + height > half {
+            split = position;
+            break;
+        }
+        accumulated += height;
+        split = position + 1;
+    }
+    split
+}
+
+/// Draws one read-only order card in the second-screen view.
+fn order_display_card(
+    ui: &mut egui::Ui,
+    index: usize,
+    item: &Item,
+    topping_category: bool,
+    ordinal: usize,
+) {
+    let tint = egui::Color32::from_rgb(item.theme[0], item.theme[1], item.theme[2]);
+    egui::Frame::new()
+        .fill(tint)
+        .corner_radius(egui::CornerRadius::same(9))
+        .inner_margin(egui::Margin::symmetric(10, 6))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                let item_name = if item.quantity > 1 {
+                    format!("{} x {}", item.quantity, item.name)
+                } else {
+                    item.name.clone()
+                };
+                let title = if topping_category {
+                    format!("{} {}", item_name, ordinal)
+                } else {
+                    item_name
+                };
+                ui.label(egui::RichText::new(title).size(15.0).strong());
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(
+                        egui::RichText::new(money(
+                            item.price.saturating_mul(u64::from(item.quantity)),
+                        ))
+                        .size(14.0)
+                        .strong(),
+                    );
+                });
+            });
+            ui.indent(("order-display-toppings", index), |ui| {
+                for topping in &item.toppings {
+                    ui.horizontal(|ui| {
+                        let name = if topping.quantity > 1 {
+                            format!("Garniture : {} x {}", topping.quantity, topping.name)
+                        } else {
+                            format!("Garniture : {}", topping.name)
+                        };
+                        ui.label(egui::RichText::new(name).size(14.0));
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(
+                                egui::RichText::new(money(
+                                    topping.price.saturating_mul(u64::from(topping.quantity)),
+                                ))
+                                .size(13.0),
+                            );
+                        });
+                    });
+                }
+            });
+        });
+    ui.add_space(4.0);
 }

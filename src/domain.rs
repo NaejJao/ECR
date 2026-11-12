@@ -12,10 +12,42 @@ use std::{collections::BTreeMap, path::PathBuf};
 /// is already on the base item, and `None` when no matching base item exists.
 /// A repeated click is deliberately a no-op: toppings are unique per base item.
 pub(crate) fn attach_topping(order: &mut [Item], topping: Item, category: usize) -> Option<bool> {
-    let parent = order
-        .iter_mut()
-        .rev()
-        .find(|item| item.category_index == category)?;
+    let index = order
+        .iter()
+        .rposition(|item| item.category_index == category)?;
+    attach_topping_at(order, index, topping)
+}
+
+/// Attaches a topping to a base item the cashier explicitly selected.
+///
+/// The selection is used only when it still points at a base item in the topping's
+/// category; otherwise the latest matching base item remains the default target.
+pub(crate) fn attach_topping_to_selected(
+    order: &mut [Item],
+    topping: Item,
+    category: usize,
+    selected: Option<usize>,
+) -> Option<bool> {
+    let target = selected.filter(|&index| {
+        order
+            .get(index)
+            .is_some_and(|item| item.category_index == category)
+    });
+    match target {
+        Some(index) => attach_topping_at(order, index, topping),
+        None => attach_topping(order, topping, category),
+    }
+}
+
+/// Attaches a topping to one specific base item.
+///
+/// Returns `None` when the index is out of range or the item belongs to another
+/// category, so an outdated selection cannot silently modify the wrong product.
+fn attach_topping_at(order: &mut [Item], index: usize, topping: Item) -> Option<bool> {
+    let parent = order.get_mut(index)?;
+    if parent.category_index != topping.category_index {
+        return None;
+    }
     if parent
         .toppings
         .iter()
@@ -39,7 +71,11 @@ pub(crate) fn parse_price(s: &str) -> Option<u64> {
     let normalized = s.replace(',', ".");
     let mut p = normalized.split('.');
     let whole = p.next()?.parse::<u64>().ok()?;
-    let frac = p.next().unwrap_or("0");
+    let frac = match p.next() {
+        None => "",
+        Some("") => return None,
+        Some(frac) => frac,
+    };
     if p.next().is_some() || frac.len() > 2 || !frac.bytes().all(|b| b.is_ascii_digit()) {
         return None;
     }

@@ -3,6 +3,7 @@
 mod daily;
 mod menu;
 mod order;
+mod splash;
 pub(crate) mod widgets;
 
 use crate::{
@@ -87,6 +88,14 @@ impl eframe::App for App {
             s.text_styles
                 .insert(egui::TextStyle::Button, egui::FontId::proportional(18.0));
         });
+
+        if self.startup.is_some() {
+            self.advance_startup(ctx);
+        }
+        if self.startup.is_some() {
+            self.splash_ui(ctx);
+            return;
+        }
 
         egui::TopBottomPanel::top("header")
             .frame(
@@ -204,6 +213,49 @@ impl eframe::App for App {
                             let response = ui
                                 .add(
                                     egui::Button::new("")
+                                        .fill(egui::Color32::from_rgb(57, 99, 72))
+                                        .stroke(egui::Stroke::NONE)
+                                        .corner_radius(egui::CornerRadius::same(10))
+                                        .min_size([48.0, 44.0].into()),
+                                )
+                                .on_hover_text("Afficher la commande sur un second écran");
+                            let rect = response.rect;
+                            let painter = ui.painter();
+                            let stroke = egui::Stroke::new(2.0_f32, egui::Color32::WHITE);
+                            let monitor = egui::Rect::from_center_size(
+                                rect.center() + egui::vec2(0.0, -2.0),
+                                egui::vec2(24.0, 16.0),
+                            );
+                            painter.rect_stroke(
+                                monitor,
+                                egui::CornerRadius::same(3),
+                                stroke,
+                                egui::StrokeKind::Inside,
+                            );
+                            let stand_bottom = rect.center().y + 11.0;
+                            painter.line_segment(
+                                [
+                                    egui::pos2(rect.center().x, monitor.bottom()),
+                                    egui::pos2(rect.center().x, stand_bottom),
+                                ],
+                                stroke,
+                            );
+                            painter.line_segment(
+                                [
+                                    egui::pos2(rect.center().x - 7.0, stand_bottom),
+                                    egui::pos2(rect.center().x + 7.0, stand_bottom),
+                                ],
+                                stroke,
+                            );
+                            if response.pressed(ui) {
+                                self.show_order_viewport = true;
+                                self.message = None;
+                            }
+                        }
+                        if self.screen == Screen::Order {
+                            let response = ui
+                                .add(
+                                    egui::Button::new("")
                                         .fill(egui::Color32::from_rgb(176, 54, 48))
                                         .stroke(egui::Stroke::NONE)
                                         .corner_radius(egui::CornerRadius::same(10))
@@ -274,6 +326,12 @@ impl eframe::App for App {
         }
         if self.show_menu_password {
             self.menu_password_window(ctx);
+        }
+        if self.export_preview.is_some() {
+            self.export_preview_window(ctx);
+        }
+        if self.show_order_viewport {
+            self.order_viewport_ui(ctx);
         }
     }
 }

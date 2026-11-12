@@ -1,12 +1,18 @@
 //! Regression tests for menu compatibility, category reporting, and topping rules.
 
 use crate::{domain::*, model::*};
-/// Confirms complimentary products remain valid while negative prices are rejected.
+/// Confirms complimentary products remain valid while malformed prices are rejected.
 #[test]
-fn zero_price_is_valid_but_negative_price_is_rejected() {
+fn zero_price_is_valid_but_malformed_prices_are_rejected() {
     assert_eq!(parse_price("0"), Some(0));
     assert_eq!(parse_price("0,00"), Some(0));
+    assert_eq!(parse_price("4.5"), Some(450));
+    assert_eq!(parse_price("4,50"), Some(450));
     assert_eq!(parse_price("-0,50"), None);
+    assert_eq!(parse_price("4."), None);
+    assert_eq!(parse_price("4,"), None);
+    assert_eq!(parse_price(".5"), None);
+    assert_eq!(parse_price("4..5"), None);
 }
 
 /// Ensures legacy menu fields load and absent optional image paths default safely.
@@ -75,6 +81,99 @@ fn repeated_identical_topping_is_ignored_on_the_same_base_product() {
     }
     assert_eq!(order[0].toppings.len(), 1);
     assert_eq!(order[0].total(), 600);
+}
+
+/// Ensures a topping can be attached to an earlier base item selected by the cashier.
+#[test]
+fn topping_attaches_to_explicitly_selected_earlier_base_item() {
+    let mut order = vec![
+        base_item("Gaufre 1", "Gaufres", 0),
+        base_item("Gaufre 2", "Gaufres", 0),
+    ];
+    let result = attach_topping_to_selected(
+        &mut order,
+        topping_item("Nutella", "Gaufres", 0),
+        0,
+        Some(0),
+    );
+    assert_eq!(result, Some(true));
+    assert_eq!(order[0].toppings.len(), 1);
+    assert!(order[1].toppings.is_empty());
+}
+
+/// Falls back to the latest base item when the selection is stale or in another category.
+#[test]
+fn invalid_selection_falls_back_to_latest_base_item() {
+    let mut order = vec![
+        base_item("Gaufre", "Gaufres", 0),
+        base_item("Boisson", "Boissons", 1),
+    ];
+    let result = attach_topping_to_selected(
+        &mut order,
+        topping_item("Nutella", "Gaufres", 0),
+        0,
+        Some(1),
+    );
+    assert_eq!(result, Some(true));
+    assert_eq!(order[0].toppings.len(), 1);
+    assert!(order[1].toppings.is_empty());
+
+    let mut order = vec![base_item("Gaufre 1", "Gaufres", 0)];
+    assert_eq!(
+        attach_topping_to_selected(
+            &mut order,
+            topping_item("Nutella", "Gaufres", 0),
+            0,
+            Some(9),
+        ),
+        Some(true)
+    );
+    assert_eq!(order[0].toppings.len(), 1);
+}
+
+/// Ensures selecting the same base item twice still cannot duplicate a topping.
+#[test]
+fn selected_base_item_keeps_toppings_unique() {
+    let mut order = vec![
+        base_item("Gaufre 1", "Gaufres", 0),
+        base_item("Gaufre 2", "Gaufres", 0),
+    ];
+    for _ in 0..2 {
+        attach_topping_to_selected(
+            &mut order,
+            topping_item("Nutella", "Gaufres", 0),
+            0,
+            Some(0),
+        );
+    }
+    assert_eq!(order[0].toppings.len(), 1);
+    assert!(order[1].toppings.is_empty());
+}
+
+/// Builds a base order line for the topping-selection tests.
+fn base_item(name: &str, category: &str, category_index: usize) -> Item {
+    Item {
+        name: name.into(),
+        price: 500,
+        quantity: 1,
+        category: category.into(),
+        category_index,
+        theme: theme(category_index),
+        toppings: Vec::new(),
+    }
+}
+
+/// Builds a topping order line for the topping-selection tests.
+fn topping_item(name: &str, category: &str, category_index: usize) -> Item {
+    Item {
+        name: name.into(),
+        price: 100,
+        quantity: 1,
+        category: category.into(),
+        category_index,
+        theme: theme(category_index),
+        toppings: Vec::new(),
+    }
 }
 
 /// Checks toppings affect revenue totals but not main-product category quantities.
