@@ -3,9 +3,14 @@
 //! Completed receipts are read-only; product images are fitted into a fixed one-third-width
 //! button panel without changing the label and price area.
 
-use crate::{app::App, domain::*, model::Item, ui::widgets::*};
+use crate::{
+    app::{App, OrderDisplay, OrderDisplayLine},
+    domain::*,
+    ui::widgets::*,
+};
 use chrono::{Local, TimeZone};
 use eframe::egui;
+use std::sync::{atomic::Ordering, Arc};
 
 impl App {
     /// Loads and caches a product image texture, reloading it when the file changes.
@@ -626,91 +631,126 @@ impl App {
 
     /// Draws the current order in a separate native window for a second screen.
     pub(crate) fn order_viewport_ui(&mut self, ctx: &egui::Context) {
-        let mut open = self.show_order_viewport;
-        let mut close_requested = false;
-        ctx.show_viewport_immediate(
-            egui::ViewportId::from_hash_of("ecr-order-display"),
+        if self.order_viewport_closed.swap(false, Ordering::Relaxed) {
+            self.show_order_viewport = false;
+            return;
+        }
+        self.sync_order_display(ctx);
+        let display = Arc::clone(&self.order_display);
+        let closed = Arc::clone(&self.order_viewport_closed);
+        let focus_main = Arc::clone(&self.order_viewport_needs_focus);
+        // Deferred rendering lets the second screen sleep until the order changes.
+        ctx.show_viewport_deferred(
+            order_viewport_id(),
             egui::ViewportBuilder::default()
                 .with_title("ECR — Commande en cours")
                 .with_inner_size([1280.0, 800.0])
                 .with_min_inner_size([720.0, 480.0])
-                .with_maximized(true),
-            |ctx, class| {
-                if ctx.input(|input| input.viewport().close_requested()) {
-                    close_requested = true;
-                }
+                .with_maximized(true)
+                .with_active(false),
+            move |ctx, class| {
                 if class == egui::ViewportClass::Embedded {
-                    egui::Window::new("Commande en cours")
-                        .open(&mut open)
-                        .resizable(true)
-                        .default_size([900.0, 600.0])
-                        .show(ctx, |ui| self.order_display_ui(ui));
-                } else {
-                    egui::CentralPanel::default()
-                        .frame(page_frame())
-                        .show(ctx, |ui| self.order_display_ui(ui));
+                    return;
                 }
+                if focus_main.swap(false, Ordering::Relaxed) {
+                    ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Focus);
+                }
+                if ctx.input(|input| input.viewport().close_requested()) {
+                    closed.store(true, Ordering::Relaxed);
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    ctx.request_repaint_of(egui::ViewportId::ROOT);
+                }
+                let display = display
+                    .read()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                egui::CentralPanel::default()
+                    .frame(page_frame())
+                    .show(ctx, |ui| order_display_ui(ui, &display));
             },
         );
-        self.show_order_viewport = open && !close_requested;
     }
 
-    /// Renders the read-only order content split into two equal-width columns.
-    fn order_display_ui(&self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            ui.heading(egui::RichText::new("Commande en cours").size(28.0).strong());
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.label(
-                    egui::RichText::new(format!("À PAYER  {}", money(self.total())))
-                        .size(30.0)
-                        .strong(),
-                );
-            });
-        });
-        ui.separator();
-        if self.order.is_empty() {
-            ui.add_space(24.0);
-            ui.vertical_centered(|ui| {
-                ui.label(egui::RichText::new("Aucune commande en cours.").size(24.0));
-            });
-            return;
+    /// Rebuilds the shared snapshot and wakes the second screen only when it changed.
+    fn sync_order_display(&self, ctx: &egui::Context) {
+        let display = OrderDisplay {
+            lines: self
+                .displayed_order()
+                .into_iter()
+                .map(|(index, topping_category, ordinal)| OrderDisplayLine {
+                    order_index: index,
+                    item: self.order[index].clone(),
+                    ordinal: topping_category.then_some(ordinal),
+                })
+                .collect(),
+            total: self.total(),
+        };
+        let changed = {
+            let shared = self
+                .order_display
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            *shared != display
+        };
+        if changed {
+            *self
+                .order_display
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) = display;
+            ctx.request_repaint_of(order_viewport_id());
         }
-
-        let entries = self.displayed_order();
-        let split = split_for_two_columns(&entries, &self.order);
-        let (left, right) = entries.split_at(split);
-        egui::ScrollArea::vertical()
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                ui.columns(2, |columns| {
-                    for (column, entries) in columns.iter_mut().zip([left, right]) {
-                        for &(index, topping_category, ordinal) in entries {
-                            order_display_card(
-                                column,
-                                index,
-                                &self.order[index],
-                                topping_category,
-                                ordinal,
-                            );
-                        }
-                    }
-                });
-            });
     }
 }
 
+/// Stable identifier for the second-screen viewport.
+fn order_viewport_id() -> egui::ViewportId {
+    egui::ViewportId::from_hash_of("ecr-order-display")
+}
+
+/// Renders the read-only order content split into two equal-width columns.
+fn order_display_ui(ui: &mut egui::Ui, display: &OrderDisplay) {
+    ui.horizontal(|ui| {
+        ui.heading(egui::RichText::new("Commande en cours").size(28.0).strong());
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.label(
+                egui::RichText::new(format!("À PAYER  {}", money(display.total)))
+                    .size(30.0)
+                    .strong(),
+            );
+        });
+    });
+    ui.separator();
+    if display.lines.is_empty() {
+        ui.add_space(24.0);
+        ui.vertical_centered(|ui| {
+            ui.label(egui::RichText::new("Aucune commande en cours.").size(24.0));
+        });
+        return;
+    }
+
+    let split = split_for_two_columns(&display.lines);
+    let (left, right) = display.lines.split_at(split);
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            ui.columns(2, |columns| {
+                for (column, lines) in columns.iter_mut().zip([left, right]) {
+                    for line in lines {
+                        order_display_card(column, line);
+                    }
+                }
+            });
+        });
+}
+
 /// Splits order lines into two columns with roughly equal estimated heights.
-fn split_for_two_columns(entries: &[(usize, bool, usize)], order: &[Item]) -> usize {
-    let item_height = |index: usize| 34.0 + order[index].toppings.len() as f32 * 23.0;
-    let total: f32 = entries
-        .iter()
-        .map(|&(index, _, _)| item_height(index))
-        .sum();
+fn split_for_two_columns(entries: &[OrderDisplayLine]) -> usize {
+    let item_height = |line: &OrderDisplayLine| 34.0 + line.item.toppings.len() as f32 * 23.0;
+    let total: f32 = entries.iter().map(item_height).sum();
     let half = total / 2.0;
     let mut accumulated = 0.0;
     let mut split = 0;
-    for (position, &(index, _, _)) in entries.iter().enumerate() {
-        let height = item_height(index);
+    for (position, line) in entries.iter().enumerate() {
+        let height = item_height(line);
         if position > 0 && accumulated + height > half {
             split = position;
             break;
@@ -722,13 +762,8 @@ fn split_for_two_columns(entries: &[(usize, bool, usize)], order: &[Item]) -> us
 }
 
 /// Draws one read-only order card in the second-screen view.
-fn order_display_card(
-    ui: &mut egui::Ui,
-    index: usize,
-    item: &Item,
-    topping_category: bool,
-    ordinal: usize,
-) {
+fn order_display_card(ui: &mut egui::Ui, line: &OrderDisplayLine) {
+    let item = &line.item;
     let tint = egui::Color32::from_rgb(item.theme[0], item.theme[1], item.theme[2]);
     egui::Frame::new()
         .fill(tint)
@@ -741,10 +776,9 @@ fn order_display_card(
                 } else {
                     item.name.clone()
                 };
-                let title = if topping_category {
-                    format!("{} {}", item_name, ordinal)
-                } else {
-                    item_name
+                let title = match line.ordinal {
+                    Some(ordinal) => format!("{} {}", item_name, ordinal),
+                    None => item_name,
                 };
                 ui.label(egui::RichText::new(title).size(15.0).strong());
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -757,7 +791,7 @@ fn order_display_card(
                     );
                 });
             });
-            ui.indent(("order-display-toppings", index), |ui| {
+            ui.indent(("order-display-toppings", line.order_index), |ui| {
                 for topping in &item.toppings {
                     ui.horizontal(|ui| {
                         let name = if topping.quantity > 1 {

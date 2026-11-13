@@ -25,7 +25,7 @@ pub(crate) struct Product {
 }
 
 /// A product line recorded in an open or completed order.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) struct Item {
     /// Product name captured when the item was added.
     pub(crate) name: String,

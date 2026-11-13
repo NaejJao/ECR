@@ -11,6 +11,7 @@ use crate::{
     ui::widgets::*,
 };
 use eframe::egui;
+use std::sync::atomic::Ordering;
 
 impl App {
     /// Prompts for the menu password and opens menu management only after verification.
@@ -218,7 +219,11 @@ impl eframe::App for App {
                                         .corner_radius(egui::CornerRadius::same(10))
                                         .min_size([48.0, 44.0].into()),
                                 )
-                                .on_hover_text("Afficher la commande sur un second écran");
+                                .on_hover_text(if self.show_order_viewport {
+                                    "Masquer la commande du second écran"
+                                } else {
+                                    "Afficher la commande sur un second écran"
+                                });
                             let rect = response.rect;
                             let painter = ui.painter();
                             let stroke = egui::Stroke::new(2.0_f32, egui::Color32::WHITE);
@@ -248,7 +253,12 @@ impl eframe::App for App {
                                 stroke,
                             );
                             if response.pressed(ui) {
-                                self.show_order_viewport = true;
+                                self.show_order_viewport = !self.show_order_viewport;
+                                if self.show_order_viewport {
+                                    self.order_viewport_closed.store(false, Ordering::Relaxed);
+                                    self.order_viewport_needs_focus
+                                        .store(true, Ordering::Relaxed);
+                                }
                                 self.message = None;
                             }
                         }
