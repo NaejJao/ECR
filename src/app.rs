@@ -736,9 +736,12 @@ fn default_export_file_name(from: NaiveDate, to: NaiveDate) -> String {
 
 /// Returns a safe PDF file name derived from the editable preview field.
 fn normalize_export_file_name(input: &str) -> Option<String> {
-    let name = std::path::Path::new(input.trim())
-        .file_name()?
-        .to_str()?
+    // Split on both separators instead of relying on `Path`, whose handling of
+    // Windows drive prefixes differs from Unix (for example `a:b.pdf`).
+    let name = input
+        .trim()
+        .rsplit(['/', '\\'])
+        .find(|segment| !segment.is_empty())?
         .trim();
     if name.is_empty() || name.eq_ignore_ascii_case(".pdf") {
         return None;
@@ -866,6 +869,10 @@ mod tests {
         assert_eq!(
             normalize_export_file_name("../secret.pdf"),
             Some("secret.pdf".into())
+        );
+        assert_eq!(
+            normalize_export_file_name(r"C:\Users\jean\bilan.pdf"),
+            Some("bilan.pdf".into())
         );
         assert_eq!(
             normalize_export_file_name("a:b.pdf"),
