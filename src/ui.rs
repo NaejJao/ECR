@@ -11,7 +11,28 @@ use crate::{
     ui::widgets::*,
 };
 use eframe::egui;
-use std::sync::atomic::Ordering;
+
+/// Applies the shared light theme to a window, including the second-screen display.
+pub(crate) fn apply_style(ctx: &egui::Context) {
+    let mut v = egui::Visuals::light();
+    v.window_fill = egui::Color32::from_rgb(247, 247, 243);
+    v.panel_fill = v.window_fill;
+    v.widgets.inactive.bg_fill = egui::Color32::WHITE;
+    v.widgets.inactive.bg_stroke =
+        egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(225, 228, 221));
+    v.widgets.inactive.corner_radius = egui::CornerRadius::same(12);
+    v.widgets.hovered.bg_fill = egui::Color32::from_rgb(235, 243, 235);
+    v.widgets.hovered.corner_radius = egui::CornerRadius::same(12);
+    v.widgets.active.bg_fill = egui::Color32::from_rgb(220, 235, 222);
+    v.selection.bg_fill = egui::Color32::from_rgb(49, 104, 70);
+    ctx.set_visuals(v);
+    ctx.style_mut(|s| {
+        s.spacing.item_spacing = egui::vec2(12.0, 10.0);
+        s.spacing.button_padding = egui::vec2(14.0, 10.0);
+        s.text_styles
+            .insert(egui::TextStyle::Button, egui::FontId::proportional(18.0));
+    });
+}
 
 impl App {
     /// Prompts for the menu password and opens menu management only after verification.
@@ -71,24 +92,7 @@ impl App {
 impl eframe::App for App {
     /// Draws the shared header, applies global styling, and displays the active screen.
     fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
-        let mut v = egui::Visuals::light();
-        v.window_fill = egui::Color32::from_rgb(247, 247, 243);
-        v.panel_fill = v.window_fill;
-        v.widgets.inactive.bg_fill = egui::Color32::WHITE;
-        v.widgets.inactive.bg_stroke =
-            egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(225, 228, 221));
-        v.widgets.inactive.corner_radius = egui::CornerRadius::same(12);
-        v.widgets.hovered.bg_fill = egui::Color32::from_rgb(235, 243, 235);
-        v.widgets.hovered.corner_radius = egui::CornerRadius::same(12);
-        v.widgets.active.bg_fill = egui::Color32::from_rgb(220, 235, 222);
-        v.selection.bg_fill = egui::Color32::from_rgb(49, 104, 70);
-        ctx.set_visuals(v);
-        ctx.style_mut(|s| {
-            s.spacing.item_spacing = egui::vec2(12.0, 10.0);
-            s.spacing.button_padding = egui::vec2(14.0, 10.0);
-            s.text_styles
-                .insert(egui::TextStyle::Button, egui::FontId::proportional(18.0));
-        });
+        apply_style(ctx);
 
         if self.startup.is_some() {
             self.advance_startup(ctx);
@@ -253,13 +257,8 @@ impl eframe::App for App {
                                 stroke,
                             );
                             if response.pressed(ui) {
-                                self.show_order_viewport = !self.show_order_viewport;
-                                if self.show_order_viewport {
-                                    self.order_viewport_closed.store(false, Ordering::Relaxed);
-                                    self.order_viewport_needs_focus
-                                        .store(true, Ordering::Relaxed);
-                                }
                                 self.message = None;
+                                self.toggle_order_display();
                             }
                         }
                         if self.screen == Screen::Order {
@@ -340,8 +339,13 @@ impl eframe::App for App {
         if self.export_preview.is_some() {
             self.export_preview_window(ctx);
         }
-        if self.show_order_viewport {
-            self.order_viewport_ui(ctx);
+        if self.order_display_session.is_some() || self.order_viewport_focus_retries > 0 {
+            self.sync_order_display(ctx);
         }
+    }
+
+    /// Stops the second-screen process as soon as the cashier window closes.
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.order_display_session = None;
     }
 }

@@ -12,7 +12,6 @@ use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     fs,
     path::PathBuf,
-    sync::{atomic::AtomicBool, Arc, RwLock},
     time::SystemTime,
 };
 
@@ -89,12 +88,10 @@ pub(crate) struct App {
     pub(crate) expanded_categories: BTreeSet<String>,
     /// Whether the read-only order display is open on the second screen.
     pub(crate) show_order_viewport: bool,
-    /// Snapshot rendered by the second screen and refreshed only when it changes.
-    pub(crate) order_display: Arc<RwLock<OrderDisplay>>,
-    /// Set by the second screen when its window is closed through the system.
-    pub(crate) order_viewport_closed: Arc<AtomicBool>,
-    /// Set when the second screen opens, so the first frame can return focus to the main window.
-    pub(crate) order_viewport_needs_focus: Arc<AtomicBool>,
+    /// Child process rendering the order display; `None` when it is closed.
+    pub(crate) order_display_session: Option<crate::display::DisplaySession>,
+    /// Remaining attempts to return focus to the main window after the display opens.
+    pub(crate) order_viewport_focus_retries: u8,
     /// Whether the read-only order-history dialog is open.
     pub(crate) show_previous_order: bool,
     /// Index of the receipt currently shown in the order-history dialog.
@@ -118,26 +115,6 @@ pub(crate) enum Screen {
     Menu,
     /// Daily totals and order export.
     Daily,
-}
-
-/// Snapshot of the current order rendered by the second screen.
-#[derive(Clone, Default, PartialEq)]
-pub(crate) struct OrderDisplay {
-    /// Lines in the same display order and numbering as the sale panel.
-    pub(crate) lines: Vec<OrderDisplayLine>,
-    /// Total amount due in centimes.
-    pub(crate) total: u64,
-}
-
-/// One read-only order line shown on the second screen.
-#[derive(Clone, PartialEq)]
-pub(crate) struct OrderDisplayLine {
-    /// Stable index of the line in the open order, used for egui identifiers.
-    pub(crate) order_index: usize,
-    /// Base product with its nested toppings.
-    pub(crate) item: Item,
-    /// Per-category number shown after the name when the category has toppings.
-    pub(crate) ordinal: Option<usize>,
 }
 
 /// Generated PDF and the report data needed to show it before saving.
@@ -273,9 +250,8 @@ impl Default for App {
             export_preview: None,
             expanded_categories: BTreeSet::new(),
             show_order_viewport: false,
-            order_display: Arc::new(RwLock::new(OrderDisplay::default())),
-            order_viewport_closed: Arc::new(AtomicBool::new(false)),
-            order_viewport_needs_focus: Arc::new(AtomicBool::new(false)),
+            order_display_session: None,
+            order_viewport_focus_retries: 0,
             show_previous_order: false,
             history_receipt_index: 0,
             show_menu_password: false,
